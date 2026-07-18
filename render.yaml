@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: tjk-canli-radar
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/status
+    autoDeployTrigger: commit
