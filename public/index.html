@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#09141f">
+    <meta name="description" content="TJK canlı oran, AGF ve oran hareketi analiz paneli">
+    <title>TJK Canlı Radar</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <div>
+          <p class="eyebrow">RESMÎ TJK VERİ AKIŞI</p>
+          <h1>TJK Canlı Radar</h1>
+        </div>
+      </div>
+      <div class="live-state" id="liveState">
+        <span class="live-dot"></span>
+        <span>Bağlanıyor</span>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="control-panel panel">
+        <label>
+          <span>Tarih</span>
+          <input id="dateInput" type="date">
+        </label>
+        <label>
+          <span>Hipodrom</span>
+          <select id="venueSelect" aria-label="Hipodrom seç"></select>
+        </label>
+        <label>
+          <span>Koşu</span>
+          <select id="raceSelect" aria-label="Koşu seç"></select>
+        </label>
+        <button class="refresh-button" id="refreshButton" type="button">
+          <span class="refresh-icon" aria-hidden="true">↻</span>
+          Yenile
+        </button>
+        <label class="auto-toggle">
+          <input id="autoRefresh" type="checkbox" checked>
+          <span class="toggle-track"><span></span></span>
+          <span>15 sn canlı</span>
+        </label>
+      </section>
+
+      <div id="errorBanner" class="error-banner" role="alert" hidden></div>
+
+      <section id="loadingView" class="loading-grid" aria-label="Veriler yükleniyor">
+        <div class="skeleton panel"></div>
+        <div class="skeleton panel"></div>
+        <div class="skeleton panel tall"></div>
+      </section>
+
+      <div id="dashboard" hidden>
+        <section class="race-heading">
+          <div>
+            <p class="eyebrow" id="venueLabel">—</p>
+            <h2 id="raceTitle">—</h2>
+            <p class="race-meta" id="raceMeta">—</p>
+          </div>
+          <div class="status-stack">
+            <span class="race-status" id="raceStatus">—</span>
+            <span class="updated-time" id="updatedTime">—</span>
+          </div>
+        </section>
+
+        <section class="decision-grid">
+          <article class="decision-card primary panel">
+            <div class="decision-topline">
+              <span>MODELİN BİRİNCİ ADAYI</span>
+              <span class="confidence-chip" id="confidenceChip">—</span>
+            </div>
+            <div class="pick-lockup">
+              <span class="pick-number" id="leaderNumber">—</span>
+              <div>
+                <h3 id="leaderName">—</h3>
+                <p id="leaderSummary">—</p>
+              </div>
+            </div>
+            <div class="confidence-row">
+              <span>Güven skoru</span>
+              <strong id="confidenceValue">—</strong>
+            </div>
+            <div class="confidence-bar"><span id="confidenceBar"></span></div>
+          </article>
+
+          <article class="signal-card panel">
+            <span class="signal-label">EN ÇOK DESTEK</span>
+            <strong id="steamPick">—</strong>
+            <span id="steamMove">—</span>
+          </article>
+          <article class="signal-card panel">
+            <span class="signal-label">DEĞER ADAYI</span>
+            <strong id="valuePick">—</strong>
+            <span id="valueEdge">—</span>
+          </article>
+          <article class="signal-card panel">
+            <span class="signal-label">SÜRPRİZ ADAYI</span>
+            <strong id="surprisePick">—</strong>
+            <span id="surpriseDetail">—</span>
+          </article>
+        </section>
+
+        <section class="section-block">
+          <div class="section-title-row">
+            <div>
+              <p class="eyebrow">GANYAN PİYASASI</p>
+              <h2>At bazında canlı radar</h2>
+            </div>
+            <div class="legend">
+              <span><i class="legend-dot support"></i> Oran düştü</span>
+              <span><i class="legend-dot drift"></i> Oran yükseldi</span>
+            </div>
+          </div>
+          <div class="runner-list" id="runnerList"></div>
+        </section>
+
+        <section class="history-layout">
+          <article class="chart-panel panel">
+            <div class="chart-header">
+              <div>
+                <p class="eyebrow">AÇILIŞ → ŞİMDİ</p>
+                <h2 id="chartTitle">Oran hareketi</h2>
+              </div>
+              <div class="chart-stat" id="chartStat">—</div>
+            </div>
+            <div class="chart-wrap" id="historyChart"></div>
+          </article>
+
+          <article class="detail-panel panel">
+            <p class="eyebrow">AT DETAYI</p>
+            <h2 id="detailTitle">—</h2>
+            <dl id="detailList"></dl>
+          </article>
+        </section>
+
+        <section class="section-block markets-block">
+          <div class="section-title-row">
+            <div>
+              <p class="eyebrow">DİĞER PAZARLAR</p>
+              <h2>En düşük muhtemel oranlar</h2>
+            </div>
+          </div>
+          <div class="market-tabs" role="tablist">
+            <button class="market-tab active" data-market="ikili" type="button">İkili</button>
+            <button class="market-tab" data-market="siraliIkili" type="button">Sıralı İkili</button>
+            <button class="market-tab" data-market="cifte" type="button">Çifte</button>
+          </div>
+          <div class="market-grid" id="marketGrid"></div>
+        </section>
+
+        <section class="method-panel panel">
+          <div>
+            <h3>Model nasıl okuyor?</h3>
+            <p id="methodology">—</p>
+          </div>
+          <p class="warning" id="warningText">—</p>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      TJK verileri gecikmeli olabilir. Son kararı yalnızca tek bir sinyale göre verme.
+    </footer>
+  </body>
+</html>
