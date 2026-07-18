@@ -1,0 +1,15 @@
+{
+  "name": "tjk-canli-radar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TJK resmi veri akışından canlı oran, AGF ve oran hareketi analizi sunan mobil panel.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test"
+  }
+}
