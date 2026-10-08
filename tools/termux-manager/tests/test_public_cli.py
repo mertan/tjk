@@ -100,6 +100,8 @@ class PublicCliTests(unittest.TestCase):
         status, output, scan = self.invoke(["--help"], return_value=self.report)
         self.assertEqual(status, 0)
         self.assertTrue(output.startswith("Usage: python3 -I -B public_scan.py"))
+        self.assertIn("--ranking-input FILE | --symbols AAA,BBB", output)
+        self.assertIn("missing selection returns PAS", output)
         scan.assert_not_called()
 
     def test_fintable_and_explicit_symbols_use_isolated_adapter(self):
@@ -121,6 +123,104 @@ class PublicCliTests(unittest.TestCase):
                      ["--provider", "fintable", "--symbols", ",".join("S" + str(i) for i in range(21))]):
             with self.subTest(args=args):
                 self.assert_error(args, "invalid_arguments")
+
+    def test_fintable_without_selection_does_not_supply_alphabetical_symbols(self):
+        status, output, scan = self.invoke(
+            ["--provider", "fintable"], return_value={
+                **self.report, "error": "RANKING_INPUT_REQUIRED",
+            })
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output)["error"], "RANKING_INPUT_REQUIRED")
+        self.assertEqual(scan.call_args.kwargs["provider"], "fintable")
+        self.assertIsNone(scan.call_args.kwargs["symbols"])
+        self.assertNotIn("ranking_input", scan.call_args.kwargs)
+
+    def test_ranking_input_is_bounded_read_only_and_forwarded_without_path(self):
+        payload = {"schema_version": 1, "source": {}, "records": []}
+        filename = self.file(json.dumps(payload), "ranking.json")
+        before = Path(filename).read_bytes()
+        status, output, scan = self.invoke(
+            ["--provider", "fintable", "--ranking-input", filename],
+            return_value=self.report,
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output), self.report)
+        self.assertEqual(scan.call_args.kwargs["ranking_input"], payload)
+        self.assertEqual(scan.call_args.kwargs["provider"], "fintable")
+        self.assertIsNone(scan.call_args.kwargs["symbols"])
+        self.assertNotIn(filename, repr(scan.call_args.kwargs))
+        self.assertNotIn(str(self.root), output)
+        self.assertEqual(Path(filename).read_bytes(), before)
+        self.assertEqual([p.name for p in self.root.iterdir()], ["ranking.json"])
+
+    def test_ranking_conflicting_or_missing_arguments_rejected_before_read(self):
+        cases = (
+            ["--ranking-input", "not_read"],
+            ["--provider", "fintable", "--ranking-input"],
+            ["--provider", "fintable", "--ranking-input", "--symbols", "AAA"],
+            ["--provider", "fintable", "--ranking-input", "a", "--ranking-input", "b"],
+            ["--provider", "fintable", "--ranking-input", "not_read", "--symbols", "AAA"],
+            ["--provider", "fintable", "--ranking-input", "not_read", "--observations", "not_read"],
+            ["--provider", "fintable", "--ranking-input", "not_read", "--context", "not_read"],
+        )
+        with patch.object(public_cli, "_read_json") as reader:
+            for args in cases:
+                with self.subTest(args=args):
+                    self.assert_error(args, "invalid_arguments")
+            reader.assert_not_called()
+
+    def test_ranking_file_failures_are_safe_and_skip_adapter(self):
+        missing = str(self.root / "synthetic_secret_missing")
+        invalid = self.file("synthetic_secret_not_json", "invalid.json")
+        non_object = self.file("[]", "list.json")
+        duplicate = self.file('{"x":1,"x":2}', "duplicate.json")
+        nonfinite = self.file('{"x":NaN}', "nonfinite.json")
+        deep = self.file('{"x":' * 22 + "null" + "}" * 22, "deep.json")
+        cases = (
+            (missing, "unsafe_input_file"),
+            (str(self.root), "unsafe_input_file"),
+            (invalid, "invalid_json"),
+            (non_object, "invalid_input_shape"),
+            (duplicate, "invalid_json"),
+            (nonfinite, "invalid_json"),
+            (deep, "input_too_complex"),
+        )
+        for filename, error in cases:
+            with self.subTest(error=error, filename=Path(filename).name):
+                output = self.assert_error(
+                    ["--provider", "fintable", "--ranking-input", filename], error,
+                )
+                self.assertNotIn("synthetic_secret", output)
+
+    def test_ranking_symlink_and_fifo_are_rejected_without_following_or_blocking(self):
+        target = self.file("{}", "ranking.json")
+        link = self.root / "link.json"
+        link.symlink_to(target)
+        folder = self.root / "parent_link"
+        folder.symlink_to(self.root, target_is_directory=True)
+        fifo = self.root / "ranking.fifo"
+        os.mkfifo(fifo)
+        for filename in (link, folder / "ranking.json", fifo):
+            with self.subTest(filename=filename.name):
+                self.assert_error(
+                    ["--provider", "fintable", "--ranking-input", str(filename)],
+                    "unsafe_input_file",
+                )
+
+    def test_ranking_oversized_file_is_rejected_before_adapter(self):
+        path = self.root / "ranking.json"
+        with path.open("wb") as stream:
+            stream.truncate(public_cli.MAX_INPUT_BYTES + 1)
+        self.assert_error(
+            ["--provider", "fintable", "--ranking-input", str(path)], "input_too_large",
+        )
+
+    def test_ranking_input_node_limit_is_enforced(self):
+        filename = self.file(json.dumps({"rows": [None] * 100}), "ranking.json")
+        with patch.object(public_cli, "MAX_NODES", 100):
+            self.assert_error(
+                ["--provider", "fintable", "--ranking-input", filename], "input_too_complex",
+            )
 
     def test_isolated_entrypoint_ignores_pythonpath_without_writes(self):
         rogue = self.root / "equity_guard"

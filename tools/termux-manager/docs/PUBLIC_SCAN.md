@@ -12,13 +12,40 @@ oluşturmaz. `execution_enabled=false` her sonuçta korunur.
 python3 -I -B tools/termux-manager/public_scan.py --provider fintable
 ```
 
-Nasdaq Trader NASDAQ/NYSE dizinlerinden en fazla **20** uygun sembol seçilir.
-Varsayılan seçim alfabetik ilk 20 kayıttır: sembol dosyasında fiyat yoktur,
-bu seçim tüm piyasadaki en güçlü veya 1–5 USD aralığındaki en iyi 20 hisse
-iddiası değildir. Kendi en fazla 20 sembolünü `--symbols AAA,BBB` biçiminde
-verebilirsin; semboller o çalıştırmada indirilen dizinde bulunmalıdır. Bunlar
-sözdizimi örnekleridir, hisse önerisi değildir. Yinelenen/geçersiz/21+ sembol
-ve yerel gözlem/bağlam dosyasıyla bu modu karıştırmak reddedilir.
+**Alfabetik ilk 20 seçimi kaldırıldı.** Yukarıdaki komut seçim girdisi olmadan
+`DATA_UNAVAILABLE / PAS` ve `RANKING_INPUT_REQUIRED` raporlar. Bu sonuç,
+güncel hacim/hareket verisi olmadan piyasanın tarandığını iddia etmez.
+
+Kullanım hakkı ve kaynağı incelenmiş yerel sıralama girdisi varsa:
+
+```sh
+python3 -I -B tools/termux-manager/public_scan.py --provider fintable \
+  --ranking-input /OZEL/GIRDI/ranking.json
+```
+
+Dosyadaki NASDAQ/NYSE kayıtları o çalıştırmada indirilen Nasdaq Trader
+dizinleriyle doğrulanır. Fiyatı 1–5 USD olan ve pozitif günlük hareket gösteren
+uygun gözlemler, **hacim ve fiyat değişiminin eşit ağırlıklı rekabet yüzdelik
+sıralamasıyla** sıralanır. Eşit değerler aynı sıra puanını alır. En fazla **20**
+sembol Fintable fiyat/geçmiş/SEC incelemesine aktarılır. Sıralama yalnız girdi
+kapsamı içindir; tüm piyasanın en iyi 20 hissesi, güçlü RVOL veya bir yatırım
+önerisi olduğu anlamına gelmez. Kaynağı, zaman damgası, gecikmesi ve kapsamı
+raporda korunur. Geçersiz veya eski girdi alfabetik seçime geri dönmez.
+
+İzinli ve ücretsiz bir tüm piyasa hacim/yükselenler akışı bu çalışma için
+doğrulanamadı. Fintable'ın belgelenmiş fiyat ucu önceden bilinen sembolleri
+ister; 4.817 sembolü 20'lik gruplarla sorgulayarak sınır dolanılmaz. Finviz
+Elite'in yetkili resmî dışa aktarımı veya uygun lisanslı bir dışa aktarım
+girdi olabilir; ücretsiz Finviz/TradingView sayfası kazınmaz. Geçerli kullanım
+hakkı, orijinal gözlem zamanı ve alanlar yoksa veri uydurulmaz, PAS üretilir.
+[Kaynak incelemesi](FINTABLE_RANKING_SOURCES.md).
+
+Kendi en fazla 20 sembolünü ayrıca `--symbols AAA,BBB` biçiminde verebilirsin;
+bu yalnız açık **manuel seçim** olur, hacim/hareket sıralaması sayılmaz.
+Semboller o çalıştırmada indirilen dizinde bulunmalıdır. Bunlar sözdizimi
+örnekleridir, hisse önerisi değildir. Yinelenen/geçersiz/21+ sembol reddedilir.
+`--ranking-input` ile `--symbols` birlikte kullanılamaz; Fintable modu ayrıca
+`--observations` veya `--context` ile birleştirilemez.
 
 Belgelenmiş Fintable public API'si bir toplu fiyat isteği yapar. Gözlenen
 fiyatı 1–5 USD olan kayıtlar için beş dakikalık geçmiş ve, gerçek SEC iletişim
@@ -84,7 +111,13 @@ SHA** yazılır. Komut boş ve özel yeni bir dizinde yalnız o commit'i getirir
 SHA'yı doğrular ve tek tarama çalıştırır. Mevcut klonları veya kurulumu
 güncellemez. Varsayılan dal çalıştırılmaz; shell'e indirilen betik aktarılmaz.
 
-```sh
+Termux'ta Bash ile çalıştırılır. İleride gerçek, izinli sıralama dosyan varsa
+`PUBLIC_RANKING_INPUT` değişkenine özel yerel dosya yolunu verebilirsin;
+aşağıdaki blok bu yolu tek argüman olarak aktarır. Değişken yoksa varsayılan
+çalıştırma **PAS / RANKING_INPUT_REQUIRED** üretir. Dosya oluşturmaz, örnek
+fiyat veya zaman damgası üretmez ve manuel hisse seçimini kendiliğinden yapmaz.
+
+```bash
 (
 set -eu
 umask 077
@@ -101,7 +134,11 @@ GIT_ASKPASS= SSH_ASKPASS= GIT_TERMINAL_PROMPT=0 \
 [ "$(git -C "$PUBLIC_SCAN_DIR" rev-parse FETCH_HEAD)" = "$PUBLIC_SCAN_SHA" ]
 git -C "$PUBLIC_SCAN_DIR" -c core.hooksPath=/dev/null \
   checkout --quiet --detach "$PUBLIC_SCAN_SHA"
-exec python3 -I -B "$PUBLIC_SCAN_DIR/tools/termux-manager/public_scan.py" --provider fintable
+PUBLIC_SCAN_ARGS=(--provider fintable)
+if [ -n "${PUBLIC_RANKING_INPUT:-}" ]; then
+  PUBLIC_SCAN_ARGS+=(--ranking-input "$PUBLIC_RANKING_INPUT")
+fi
+exec python3 -I -B "$PUBLIC_SCAN_DIR/tools/termux-manager/public_scan.py" "${PUBLIC_SCAN_ARGS[@]}"
 )
 ```
 
@@ -112,6 +149,61 @@ yazımını kapatır. HTTP istemcisi varsa mevcut proxy ve CA güven ayarların�
 kullanır. SEC isteği için yalnız `SEC_USER_AGENT` (gerçek iletişim bilgisi
 içeren SEC tanımlayıcısı) okunur; Alpaca/BtcTurk/Termux anahtarları okunmaz.
 SEC tanımlayıcısı çıktı içine eklenmez. Eksikse SEC kontrolü tamamlanmış sayılmaz.
+
+## Yerel sıralama girdisi
+
+`--ranking-input` yalnız özel bir yerel JSON dosyası okur; URL indirmez.
+Dosya, orijinal dışa aktarımdaki alanların aşağıdaki şemaya dönüştürülmüş
+halidir. Hazır bir CSV ayrıştırıcısı veya sağlayıcının alanlarını tahmin eden
+bir dönüştürücü yoktur. Kaynakta bulunmayan gözlem zamanı, hacim kapsamı veya
+gerçek gecikme doldurulamaz. Dosya düzenleme zamanı `as_of` yerine kullanılamaz.
+Geçerli dışa aktarım yoksa dosya üretmek yerine varsayılan PAS akışı kullanılır.
+
+Üst düzeyde tam olarak `schema_version`, `source`, `records` bulunur:
+
+| Alan | Gereklilik |
+| --- | --- |
+| `schema_version` | Tam sayı `1`. |
+| `source.provider` | `finviz_elite_export` veya `licensed_public_export`; gerçek kullanım hakkı gerekir. |
+| `source.url`, `source.terms_url` | Kaynak ve izin belgesinin HTTPS adresi; kullanıcı bilgisi, query veya fragment içermez. Program bu adresleri indirmez. Finviz için resmî Finviz alan adı ve Elite dışa aktarım hakkı gerekir. |
+| `source.permission` | `personal_automated_analysis`. |
+| `source.permission_reviewed_at` | Saat dilimli, en fazla 30 günlük izin inceleme zamanı. |
+| `source.verification` | `operator_reviewed_original_export`; operatör beyanıdır, bağımsız kaynak doğrulaması değildir. |
+| `source.retrieved_at` | Gerçek alma zamanı; saat dilimli, en fazla 300 saniye eski. |
+| `source.delay_seconds` | Bilinen kaynak gecikmesi; tam sayı 0–900. Bilinmeyen gecikme `0` yapılamaz. |
+| `source.volume_scope` | Tüm satırlar için `consolidated_us` veya `iex`; farklı kapsamlar aynı sıralamada karıştırılamaz. |
+| `source.volume_basis` | `session_cumulative_shares`; seansın birikimli hisse adedi. |
+| `records` | 1–10.000 satır; bu, Fintable'a gönderilecek sembol sınırını artırmaz. |
+| Her satır | Tam olarak `symbol`, `exchange`, `price_usd`, `previous_close_usd`, `volume_shares`, `as_of`, `session_date`. |
+
+`exchange` NASDAQ veya NYSE olmalı ve Nasdaq Trader kaydıyla eşleşmelidir.
+Fiyat ve önceki kapanış pozitif sayılar, hacim pozitif tam sayı olmalıdır.
+`session_date` New York'taki günün `YYYY-MM-DD` biçimidir; saat dilimli `as_of`
+aynı güne ait, en fazla 900 saniye eski ve alma zamanından sonra olmamalıdır.
+Gelecek zamanlar reddedilir. Uygun satırların gözlem zamanları arasında en fazla
+60 saniye fark olabilir; uyumsuz anlık görüntüler bir sıralamada birleştirilmez.
+Fiyat aralığı dışındaki, hareketi pozitif olmayan veya eski kayıtlar elenir.
+Yinelenen semboller, çelişkili/eksik şema ve geçersiz kaynak tüm girdiyi reddeder.
+
+Günlük hareket `(price_usd / previous_close_usd - 1) × 100` olarak hesaplanır.
+Her ölçütün yüzdelik puanı, kendisinden kesin küçük değere sahip uygun satır
+sayısının `max(1, uygun_satır_sayısı - 1)` ile bölünüp 100 ile çarpımıdır.
+`rank_score`, hacim ve hareket yüzdeliklerinin ortalamasıdır. Eşit puanda
+sırasıyla yüksek günlük hareket, yüksek hacim ve sembol sırası kullanılır.
+Alfabetik sıra yalnız tam eşitliği çözebilir; aday kaynağı olamaz.
+
+En fazla **15 dakikalık sıralama girdisi yalnız araştırma önceliği** içindir.
+`declared_delay_seconds`, `data_age_seconds`, `as_of`, `volume_scope` ve
+`source_verification` raporda görünür; gecikmeli kaynak açıkça belirtilir.
+Kaynağın gecikme beyanının `0` olması verinin alındığı anda canlı olduğunu
+kanıtlamaz; gözlem yaşı ayrıca okunmalıdır. Sıralama kayıtlarının kararı
+**PAS** kalır, işlem veya İZLE uygunluğu sağladıkları iddia edilmez.
+
+Seçilen en fazla 20 hisse daha sonra mevcut Fintable incelemesine girer.
+Bu aşamadaki **30 saniyelik fiyat tazeliği kapısı değişmedi**; 15 dakikalık
+sıralama penceresi fiyat, haber, SEC veya risk kontrollerini gevşetmez.
+IEX hacmi konsolide hacim veya NBBO değildir; bid/ask ve doğrulanmış spread
+yokluğu nedeniyle otomatik Fintable akışı AL üretmez ve PAS kalır.
 
 ## İzinli gözlem ve risk girdisi
 
@@ -226,7 +318,8 @@ servisleri veya gizli anahtar dosyaları değiştirilmedi.
 dosyasına erişim `network_unavailable`; evren doğrulanamadığı için bu tarama
 fiyat/SEC aşamasına geçmedi. Fintable public fiyat endpoint'ine ayrıca yapılan
 normal HTTPS denemesi de `network_unavailable` verdi. Çalışma ortamının ağ
-listesinde `www.nasdaqtrader.com`, `fintable.io`, `www.sec.gov`, `data.sec.gov`+yoktu; proxy/TLS/alan adı kısıtları değiştirilmedi. Canlı sağlayıcı yanıtı,
+listesinde `www.nasdaqtrader.com`, `fintable.io`, `www.sec.gov`, `data.sec.gov`
+yoktu; proxy/TLS/alan adı kısıtları değiştirilmedi. Canlı sağlayıcı yanıtı,
 güncel fiyat/hacim/haber veya telefonda uçtan uca çalışma doğrulanmadı.
 
 Bağımlılıklar ayrıca GitHub'dan kontrol edildi: [PR #1](https://github.com/mertan/tjk/pull/1)
@@ -237,3 +330,23 @@ açık/taslak ve main tabanlı; [PR #2](https://github.com/mertan/tjk/pull/2) a�
 #1–#3 içeriğini içerir. Birleştirme sırası #1 → #2 → #3 → bu ek olmalıdır;
 taban değişikliklerinde kontroller yeniden çalıştırılmalıdır. Hiçbir PR
 birleştirilmedi veya mevcut PR dalı değiştirilmedi.
+
+## Sıralama ekinin doğrulaması — 8 Ekim 2026
+
+Bu ek, PR #4'ün `c09de0ca321a008efd311a04d393f92331237686` sürümü üzerine
+hazırlandı. Python **3.12.14** ve **3.13.13** altında **488 test geçti**
+(424 mevcut + 64 yeni). Testlerde alfabetik ilk 20'nin dışındaki güçlü kurgu
+kayıt seçiliyor; fiyat/geçmiş/SEC sorgularının tamamı aynı seçilmiş en fazla
+20 sembolle sınırlı kalıyor. Sıralama verisi toplama sırasında eskiyince
+öncelik listesi siliniyor; yerine 21. sembol sorgulanmıyor.
+
+14:51:43 UTC'de yeni varsayılan komut Cloud'da çalıştırıldı:
+`DATA_UNAVAILABLE / PAS`, `RANKING_INPUT_REQUIRED`, `execution_enabled=false`.
+İzinli sıralama girdisi olmadığı için hiçbir kaynak isteği yapılmadı;
+evren veya fiyatların tarandığı iddia edilmedi. Bu çalışmanın canlı hisse
+önerisi yoktur. Kullanıcının telefonda bildirdiği önceki 4.817 sembollük
+evren/20 inceleme sonucu bu Cloud testinden ayrıdır. Mevcut Termux servisleri
+ve anahtarlar değiştirilmedi. PR #2 risk motoru ve ağ izin listesi korunur.
+
+Önceki PR'lar birleştirilmeden bu değişiklik PR #4 dalını hedefler; sıra
+#1 → #2 → #3 → #4 → sıralama ekidir. Bu ek hiçbir PR'ı birleştirmez.

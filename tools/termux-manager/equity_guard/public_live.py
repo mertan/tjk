@@ -69,9 +69,11 @@ def _metrics(data, feed, now, received_at=None):
         return {**missing, "reason": "HISTORY_METRICS_INVALID"}
 
 
-def collect(*, environ=None, now=None, sources=None, market_source=None, symbols=None):
+def collect(*, environ=None, now=None, sources=None, market_source=None, symbols=None,
+            ranking_input=None):
     from .fintable import FintableSource
     from .public_sources import PublicSources
+    from .research_ranking import select as select_research_symbols
 
     clock = (lambda: now) if now is not None else (lambda: datetime.now(UTC))
     started = clock()
@@ -84,15 +86,26 @@ def collect(*, environ=None, now=None, sources=None, market_source=None, symbols
         "FINTABLE_PRICES_CAN_BE_CACHED_UP_TO_ONE_HOUR_NOT_FOR_TRADING",
         "IEX_VOLUME_IS_NOT_CONSOLIDATED_US_VOLUME",
         "NO_BID_ASK_NEWS_OR_VERIFIED_MARKET_SESSION_FROM_THIS_PROVIDER",
-        "DIRECTORY_SAMPLE_IS_NOT_A_MARKET_WIDE_MOMENTUM_RANKING",
+        "SELECTION_COVERS_ONLY_PROVIDED_OBSERVATIONS_NOT_THE_WHOLE_MARKET",
+        "RESEARCH_PRIORITY_IS_NOT_A_STOCK_RECOMMENDATION_OR_TRADE_SIGNAL",
     ]
+    result["research_priority"] = []
+    result["ranking"] = {"status": "unavailable", "selected_symbols": [],
+                         "research_priority": [], "errors": [], "source": None}
     result["coverage"].update(symbol_limit=MAX_SYMBOLS, requested_count=0,
                               price_range_count=0, price_available_count=0,
-                              selection="explicit_symbols" if symbols is not None else "first_20_directory_symbols_alphabetically")
+                              selection="explicit_symbols" if symbols is not None else "volume_momentum_ranked_local_export")
+    if symbols is not None and ranking_input is not None:
+        result["reasons"] = ["PUBLIC_CONFLICTING_SYMBOL_SELECTION"]
+        return result
     if symbols is not None and (not isinstance(symbols, list) or not 1 <= len(symbols) <= MAX_SYMBOLS or
             any(not isinstance(s, str) or not SYMBOL.fullmatch(s) for s in symbols) or
             len(set(symbols)) != len(symbols)):
         result["reasons"] = ["PUBLIC_SYMBOL_SELECTION_INVALID"]
+        return result
+    if symbols is None and ranking_input is None:
+        result["reasons"] = ["RANKING_INPUT_REQUIRED"]
+        result["ranking"]["errors"] = ["RANKING_INPUT_REQUIRED"]
         return result
     env = {"SEC_USER_AGENT": os.environ.get("SEC_USER_AGENT", "")} if environ is None else environ
     sources = sources or PublicSources(environ=env, now=now)
@@ -105,7 +118,20 @@ def collect(*, environ=None, now=None, sources=None, market_source=None, symbols
     if universe.get("status") != "available":
         result["reasons"] = universe.get("errors", []) + ["PUBLIC_UNIVERSE_UNAVAILABLE"]
         return result
-    selected = symbols if symbols is not None else sorted(s for s in listed if SYMBOL.fullmatch(s))[:MAX_SYMBOLS]
+    if symbols is None:
+        ranking = select_research_symbols(ranking_input, listed, clock())
+        result["ranking"] = ranking
+        ranking_source_index = len(result["sources"])
+        if ranking.get("source"):
+            result["sources"].append(ranking["source"])
+        if ranking["status"] != "available":
+            result["reasons"] = ranking["errors"]
+            return result
+        selected = ranking["selected_symbols"]
+        result["research_priority"] = ranking["research_priority"]
+    else:
+        selected = symbols
+        result["ranking"]["status"] = "not_requested_manual_selection"
     if not selected or any(s not in listed for s in selected):
         result["reasons"] = ["PUBLIC_LISTING_NOT_IN_DISCOVERED_UNIVERSE"]
         return result
@@ -149,6 +175,32 @@ def collect(*, environ=None, now=None, sources=None, market_source=None, symbols
                     result["coverage"]["sec_review_count"] += 1
                     result["sources"].extend(filing.get("sources", []))
     finished = clock()
+    if ranking_input is not None:
+        # Recheck every source timestamp after potentially slow history/SEC
+        # collection. Never backfill with unqueried runners-up at this point.
+        final_ranking = select_research_symbols(ranking_input, listed, finished)
+        result["ranking"] = final_ranking
+        if final_ranking.get("source"):
+            result["sources"][ranking_source_index] = final_ranking["source"]
+        else:
+            previous_source = result["sources"][ranking_source_index]
+            result["sources"][ranking_source_index] = {
+                **previous_source, "status": "unavailable",
+                "evaluated_at": _stamp(finished),
+                "retrieval_age_seconds": (finished - _dt(previous_source["retrieved_at"])).total_seconds(),
+                "errors": final_ranking["errors"],
+            }
+        if (final_ranking["status"] != "available" or
+                final_ranking["selected_symbols"] != selected):
+            result["research_priority"] = []
+            result["ranking"]["status"] = "unavailable"
+            result["ranking"]["selected_symbols"] = []
+            result["ranking"]["research_priority"] = []
+            result["ranking"]["errors"] = list(dict.fromkeys(
+                final_ranking["errors"] + ["RANKING_EXPIRED_DURING_COLLECTION"]))
+            result["reasons"].append("RANKING_EXPIRED_DURING_COLLECTION")
+        else:
+            result["research_priority"] = final_ranking["research_priority"]
     for symbol in selected:
         quote = quotes.get(symbol, {})
         source_time, age = _time_info(quote.get("as_of"), finished)

@@ -381,7 +381,7 @@ def _scan(observations, context, environ, instant, sources, live_clock):
 
 
 def scan(observations=None, context=None, *, environ=None, now=None, sources=None,
-         provider=None, symbols=None, market_source=None):
+         provider=None, symbols=None, market_source=None, ranking_input=None):
     """One bounded public scan. No manager connection, key read, or file write.
 
     Local provenance/positive-news reviews are explicit operator attestations;
@@ -398,8 +398,9 @@ def scan(observations=None, context=None, *, environ=None, now=None, sources=Non
                 raise ValueError("mixed sources")
             from .public_live import collect
             result = collect(environ=environ, now=now, sources=sources,
-                             market_source=market_source, symbols=symbols)
-        elif provider is not None or symbols is not None or market_source is not None:
+                             market_source=market_source, symbols=symbols,
+                             ranking_input=ranking_input)
+        elif provider is not None or symbols is not None or market_source is not None or ranking_input is not None:
             raise ValueError("invalid provider")
         else:
             result = _scan(observations, {} if context is None else context, environ, instant, sources, now is None)
