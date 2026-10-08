@@ -21,7 +21,10 @@ export function raceDataIssues(feed, programRace) {
     if (activeProgram.some((r) => !feedNumbers.has(r.number)) ||
         (rows || []).some((r) => !isWithdrawn(r.KOSMAZ) && !programNumbers.has(Number(r.S1)))) reasons.push('RUNNER_SET_MISMATCH');
     if ((rows || []).some((r) => !isWithdrawn(r.KOSMAZ) && programRace.runners.some((p) => p.number === Number(r.S1) && /\(ko[şs]maz\)/iu.test(p.rawName)))) reasons.push('SCRATCH_STATUS_CONFLICT');
-    if (feed.race.SAAT && programRace.time !== feed.race.SAAT.replace('.', ':')) reasons.push('RACE_TIME_MISMATCH');
+    if (feed.race.SAAT) {
+      if (typeof feed.race.SAAT !== 'string') reasons.push('INVALID_RACE_TIME');
+      else if (programRace.time !== feed.race.SAAT.replace('.', ':')) reasons.push('RACE_TIME_MISMATCH');
+    }
     if (feed.race.PIST && programRace.surface !== feed.race.PIST) reasons.push('RACE_SURFACE_MISMATCH');
   }
   if (feed.race.DURUM !== 'AÇIK' || info.DURUM !== 'AÇIK') reasons.push('RACE_NOT_OPEN');

@@ -98,7 +98,9 @@ async function fetchText(url, { timeout = 12_000, optional = false } = {}) {
       if (optional && response.status === 404) return null;
       throw new HttpError(502, `TJK veri kaynağı ${response.status} yanıtı verdi.`);
     }
-    return response.text();
+    // Body reads can reject after the HTTP headers have arrived. Await inside
+    // this try block so timeouts/disconnects follow the same safe source path.
+    return await response.text();
   } catch (error) {
     if (optional) return null;
     if (error instanceof HttpError) throw error;

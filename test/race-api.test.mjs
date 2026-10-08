@@ -8,7 +8,7 @@ const csv = await readFile(new URL('./fixtures/2026-10-08-belmont-park-program.c
 const programs = parseProgramCsv(csv);
 let sequence = 0;
 
-async function run(t, { raceNo = 6, csvBody = csv, modify = () => {}, failure = false } = {}) {
+async function run(t, { raceNo = 6, csvBody = csv, modify = () => {}, modifyRace = () => {}, failure = false, bodyFailure = null } = {}) {
   const key = `TEST${++sequence}`;
   const day = String(sequence).padStart(2, '0');
   const date = `2026-10-${day}`;
@@ -16,13 +16,18 @@ async function run(t, { raceNo = 6, csvBody = csv, modify = () => {}, failure = 
   const rows = program.runners.map((r) => ({ S1: String(r.number), G: '3.20', KOSMAZ: /Koşmaz/.test(r.rawName) }));
   const info = { SAAT: program.time, PIST: program.surface, DURUM: 'AÇIK', timestamp: Date.now(), bahisler: [{ B: 'GANYAN', muhtemeller: rows }] };
   modify(info);
+  const race = { NO: raceNo, SAAT: program.time, PIST: program.surface, DURUM: 'AÇIK' };
+  modifyRace(race);
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (raw) => {
     const url = String(raw); calls.push(url);
     if (failure) throw new Error('synthetic network failure');
+    if (bodyFailure && url.includes(bodyFailure)) return {
+      ok: true, status: 200, text: async () => { throw new Error('synthetic body read failure'); }
+    };
     const response = (data, status = 200) => new Response(JSON.stringify(data), { status });
     if (url.endsWith('checksum.json')) return response({ success: true, day: key, datetime: new Date().toISOString(), runs: { [`${key}-${raceNo}`]: ['hash'] } });
-    if (url.includes('/day-')) return response({ success: true, data: { yarislar: [{ KEY: key, YER: 'Belmont Park ABD', HIPODROM: 'Belmont Park', kosular: [{ NO: raceNo, SAAT: program.time, PIST: program.surface, DURUM: 'AÇIK' }], atlar: { [raceNo]: Object.fromEntries(program.runners.map((r) => [r.number, r.rawName])) } }] } });
+    if (url.includes('/day-')) return response({ success: true, data: { yarislar: [{ KEY: key, YER: 'Belmont Park ABD', HIPODROM: 'Belmont Park', kosular: [race], atlar: { [raceNo]: Object.fromEntries(program.runners.map((r) => [r.number, r.rawName])) } }] } });
     if (url.endsWith('.csv')) return new Response((csvBody || '').replace('08/10/2026', `${day}/10/2026`), { status: csvBody === null ? 404 : 200 });
     if (url.includes('/history?')) return response({ success: true, data: { labels: Array.from({ length: 45 }, (_, i) => `2026-10-08T18:${String(i).padStart(2, '0')}:00Z`), datasets: [{ data: Array.from({ length: 45 }, (_, i) => i === 0 ? 4 : 3.2) }] } });
     return response({ success: true, data: { muhtemeller: info } });
@@ -80,6 +85,29 @@ test('upstream network failures are explicit PAS while invalid user arguments st
   noPicks(result);
   assert.ok(result.analysis.reasonCodes.includes('SOURCE_UNAVAILABLE'));
   await assert.rejects(buildRaceAnalysis('2026-02-30', 'BELMONT', 6), { status: 400 });
+});
+
+test('response-body failures stay PAS for mandatory and optional sources', async (t) => {
+  for (const [bodyFailure, reason] of [
+    ['/checksum.json', 'SOURCE_UNAVAILABLE'],
+    ['/CSV/', 'PROGRAM_UNAVAILABLE'],
+    ['/history?', 'INSUFFICIENT_HISTORY']
+  ]) {
+    const { result } = await run(t, { bodyFailure });
+    noPicks(result);
+    assert.ok(result.analysis.reasonCodes.includes(reason));
+    assert.equal(JSON.stringify(result).includes('synthetic body read failure'), false);
+    t.mock.restoreAll();
+  }
+});
+
+test('malformed race clocks fail closed without throwing a source TypeError', async (t) => {
+  for (const time of [1914, {}, ['19:14']]) {
+    const { result } = await run(t, { modifyRace: (race) => { race.SAAT = time; } });
+    noPicks(result);
+    assert.ok(result.analysis.reasonCodes.includes('INVALID_RACE_TIME'));
+    t.mock.restoreAll();
+  }
 });
 
 test('malformed source payloads are source failures, not user errors or server crashes', async (t) => {

@@ -50,4 +50,4 @@ API `analysis.status` ve `reasonCodes` döndürür. PAS'ta `runners=[]` ve büt�
 
 **Canlı veri sınırı:** Mevcut kaynak koşuya özgü oran güncelleme zamanını doğrulamıyor. Canlı adaptör `SOURCE_FRESHNESS_UNVERIFIED / PAS` döndürür; koşunun planlanan saatini, günlük checksum saatini veya yerel indirme zamanını taze kotasyon kanıtı olarak kullanmaz. Puanlama motoru eksiksiz doğrulanmış girdiler için kullanılabilir; canlı adayları açmadan önce kaynak zamanının anlamı doğrulanmalıdır.
 
-Yerel doğrulama: Node.js 24.19.0 üzerinde 33 test başarılı. GitHub Actions Node 20/24 matrisi yalnız test ve sözdizimi kontrolü çalıştırır; dağıtım adımı içermez.
+Yerel doğrulama: Node.js 24.19.0 üzerinde 35 test başarılı. HTTP yanıt gövdesi okunurken bağlantı kopması ve bozuk kaynak saatleri de PAS ile kapanır. GitHub Actions Node 20/24 matrisi yalnız test ve sözdizimi kontrolü çalıştırır; dağıtım adımı içermez.
