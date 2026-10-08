@@ -1,12 +1,13 @@
 # Test ve inceleme sonucu
 
-8 Ekim 2026, Cloud Linux üzerinde **246 testin tamamı** hem Python **3.12.14**
+8 Ekim 2026, Cloud Linux üzerinde **269 testin tamamı** hem Python **3.12.14**
 hem de Python **3.13.13** ile geçti. Testler ayrıcalıksız kullanıcıyla çalıştı.
 
 | Kapsam | Test |
 |---|---:|
-| Sermaye, fiyat, spread, stop, günlük risk ve veri tazeliği | 36 |
-| Salt okunur Alpaca/SEC veri adaptörü, hata ve zaman kontrolleri | 37 |
+| Sermaye, fiyat, spread, stop, günlük risk ve veri tazeliği | 41 |
+| Salt okunur Alpaca/SEC veri adaptörü, hata ve zaman kontrolleri | 45 |
+| Sentetik sağlayıcı → risk motoru bütünleşimi | 10 |
 | HMAC, kalıcı nonce, özel dosyalar ve sınırlandırılmış depolama | 44 |
 | İstemci imza doğrulaması, kurulum ve web kökü/bağlantı koruması | 55 |
 | Standart Python HTTP kökünün salt okunur keşfi | 8 |
@@ -17,6 +18,10 @@ hem de Python **3.13.13** ile geçti. Testler ayrıcalıksız kullanıcıyla ça
 | Başlatma hataları, gizli bilgi sızdırmayan tanılama ve salt okunur kontrol | 24 |
 
 Komut: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -v`.
+
+Tarayıcı denetimi, 324 senaryolu risk taraması, veri filtreleri ve açık kalan
+sınırlar [SCANNER_REVIEW.md](SCANNER_REVIEW.md) belgesindedir. Son tam testler
+gerçek credential içermeyen ayrı süreç ortamlarında çalıştırıldı.
 
 Başlatma düzeltmesinin regresyonunda, `0111` üst dizin altında bilinen anahtar
 doğrudan okunabilirken önceki `O_RDONLY` geçişinin gerçek `EACCES` ürettiği

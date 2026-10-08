@@ -152,6 +152,12 @@ tekrar çalışmaz.
 
 ## Hisse analizi sınırları
 
+Tarayıcının veri/filtre incelemesi, risk sınır testleri ve açık eksikleri
+[SCANNER_REVIEW.md](docs/SCANNER_REVIEW.md); güncel resmî sağlayıcı ve BtcTurk
+kaynakları [SCANNER_SOURCES.md](docs/SCANNER_SOURCES.md) içindedir. Adayın
+`manual_review_required` alanı tamamlanmamış halt/LULD, broker ve hesap risk
+kontrollerini gösterir; `HAZIRLIK` gerçek emir yetkisi değildir.
+
 Bundled `equity_guard` gerçek emir göndermez. Kullanıcı kuralları: 50.000 TL
 sermaye, hisse başına 12.500 TL, fiyat 1–5 USD, spread hem ≤0,05 USD hem ≤%2,5,
 %3 planlı stop ve günlük 2.500 TL net zarar eşiği. Ücretler/kur makası/açık risk

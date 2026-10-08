@@ -6,7 +6,7 @@ trade recommendations or assertions about any real security or account.
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, Inexact, ROUND_UP, localcontext
 import json
 import unittest
 
@@ -177,6 +177,28 @@ class EngineTests(unittest.TestCase):
             bundle["securities"][0]["quote"].update(bid=bid, ask=ask)
             self.check_pas(bundle, "SPREAD_LIMIT_EXCEEDED")
 
+    def test_spread_overrun_beyond_default_decimal_precision_is_rejected(self):
+        # The original 28-digit subtraction rounded these overruns back to
+        # the allowed boundary. These are synthetic inputs, not real quotes.
+        for bid, ask in (("2", "2.050000000000000000000000000001"),
+                         ("1", "1.025000000000000000000000000001")):
+            with self.subTest(bid=bid):
+                bundle = fictional_bundle()
+                bundle["securities"][0]["quote"].update(bid=bid, ask=ask)
+                self.check_pas(bundle, "SPREAD_LIMIT_EXCEEDED")
+
+    def test_caller_decimal_context_cannot_change_risk_evaluation(self):
+        baseline = evaluate(self.bundle, NOW)
+        with localcontext() as caller:
+            caller.prec = 4
+            caller.rounding = ROUND_UP
+            caller.traps[Inexact] = True
+            self.assertEqual(evaluate(self.bundle, NOW), baseline)
+            # Evaluation must also leave the caller's settings untouched.
+            self.assertEqual(caller.prec, 4)
+            self.assertEqual(caller.rounding, ROUND_UP)
+            self.assertTrue(caller.traps[Inexact])
+
     def test_crossed_zero_and_negative_quote_markets_are_rejected(self):
         for bid, ask in (("2.01", "2"), ("0", "2"), ("-1", "2"), ("1", "0")):
             bundle = fictional_bundle()
@@ -239,6 +261,19 @@ class EngineTests(unittest.TestCase):
         self.bundle["account"]["open_risk_try"] = "500"
         self.check_pas(expected="DAILY_RISK_BUDGET_EXHAUSTED")
 
+    def test_exact_daily_risk_budget_is_inclusive_but_small_overrun_blocks(self):
+        self.bundle["fx"]["usdtry_bid"] = "40"
+        self.bundle["costs"].update(entry_fee_try="0", exit_fee_try="0", slippage_pct="0")
+        self.bundle["account"]["realized_pnl_try"] = "-2497.6"
+        draft = self.draft()
+        self.assertEqual(draft["quantity"], 1)
+        self.assertEqual(draft["estimated_loss_try"], "2.40")
+        self.assertEqual(draft["total_day_risk_try"], "2500.00")
+        # At the same share price even this small excess leaves no whole share
+        # of remaining risk budget; it must not disappear during subtraction.
+        self.bundle["account"]["realized_pnl_try"] = "-2497.600000000000000000000000000001"
+        self.check_pas(expected="BUDGET_BELOW_ONE_SHARE")
+
     def test_fx_bid_exit_conversion_and_fees_are_in_risk(self):
         draft = self.draft()
         expected = (Decimal("156") * (Decimal("2") * Decimal("40") -
@@ -274,6 +309,69 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.draft()["quantity"], 156)
         self.bundle["account"]["positions"].append({"symbol": "FICTD", "market_value_try": "12500"})
         self.check_pas()
+
+    def test_position_cash_and_capital_boundaries_do_not_round_up_a_share(self):
+        for constraint in ("position", "cash", "capital"):
+            with self.subTest(constraint=constraint):
+                self.bundle = fictional_bundle()
+                self.bundle["costs"]["entry_fee_try"] = "0"
+                account = self.bundle["account"]
+                if constraint == "position":
+                    account["positions"] = [{"symbol": "FICT", "market_value_try": "12420"}]
+                elif constraint == "cash":
+                    account["cash_try"] = "80"
+                else:
+                    account["cash_try"] = "1000000000000"
+                    account["positions"] = [
+                        {"symbol": symbol, "market_value_try": "12500"}
+                        for symbol in ("FICTA", "FICTB", "FICTC")
+                    ] + [{"symbol": "FICTD", "market_value_try": "12420"}]
+                draft = self.draft()
+                self.assertEqual(draft["quantity"], 1)
+                self.assertEqual(draft["entry_debit_try"], "80.00")
+                if constraint == "cash":
+                    account["cash_try"] = "79.999999999999999999999999999999"
+                else:
+                    account["positions"][-1]["market_value_try"] = "12420.0000000000000000000000000001"
+                self.check_pas(expected="BUDGET_BELOW_ONE_SHARE")
+
+    def test_fictional_price_fx_cash_and_loss_grid_preserves_all_hard_limits(self):
+        drafts = passes = 0
+        for price in ("1", "1.03", "1.99", "2.05", "4.99", "5"):
+            for fx in ("1", "40", "100"):
+                for cash in ("100", "1000", "50000"):
+                    for loss in ("0", "2400", "2499"):
+                        for held in ("0", "12000"):
+                            bundle = fictional_bundle()
+                            bundle["fx"].update(usdtry_ask=fx, usdtry_bid=fx)
+                            bundle["account"].update(
+                                cash_try=cash, realized_pnl_try="-" + loss,
+                                positions=[{"symbol": "FICT", "market_value_try": held}])
+                            item = bundle["securities"][0]
+                            item["quote"].update(bid=price, ask=price)
+                            item["trade"]["price"] = price
+                            item["metrics"]["vwap"] = str(Decimal(price) - Decimal("0.01"))
+                            result = evaluate(bundle, NOW)
+                            self.assertFalse(result["execution_enabled"])
+                            if result["decision"] == "PAS":
+                                passes += 1
+                                self.assertEqual(result["candidates"], [])
+                                continue
+                            drafts += 1
+                            draft = result["candidates"][0]
+                            self.assertGreater(draft["quantity"], 0)
+                            self.assertIsInstance(draft["quantity"], int)
+                            debit = Decimal(draft["entry_debit_try"])
+                            self.assertLessEqual(debit, Decimal(cash))
+                            self.assertLessEqual(debit + Decimal(held), Decimal("12500"))
+                            self.assertLessEqual(debit + Decimal(held), Decimal("50000"))
+                            self.assertLessEqual(Decimal(draft["total_day_risk_try"]), Decimal("2500"))
+                            stop = Decimal(draft["planned_stop_usd"])
+                            self.assertGreaterEqual(stop, Decimal(price) * Decimal("0.97"))
+                            self.assertLess(stop, Decimal(price))
+                            self.assertFalse(draft["execution_enabled"])
+        self.assertGreater(drafts, 100)
+        self.assertGreater(passes, 100)
 
     def test_unattributed_pending_order_reservations_block_new_drafts(self):
         for reserve in ("0.01", "100", "12500"):
