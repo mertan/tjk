@@ -12,7 +12,7 @@ another position's current-session loss in that explicit net-loss rule.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
+from decimal import Context, Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, localcontext
 import re
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -29,6 +29,12 @@ MAX_SPREAD_RATIO = Decimal("0.025")
 _SYMBOL = re.compile(r"[A-Z][A-Z0-9.\-]{0,14}\Z")
 _ZERO = Decimal("0")
 _CENT = Decimal("0.01")
+# Each numeric representation is capped at 100 characters below. The longest
+# money expression multiplies three such inputs and an integer share count;
+# 512 digits retain their exact finite products and boundary differences. A
+# private context also prevents caller/thread rounding settings from changing
+# hard risk limits. Rounding to cents happens only for display or the stop.
+_CALCULATION_CONTEXT = Context(prec=512)
 
 
 def _object(value, path, errors):
@@ -150,7 +156,7 @@ def _security(item, index, now, context):
         spread = ask - bid
         if spread < 0:
             errors.append(f"{path}.quote:CROSSED_MARKET")
-        elif spread > MAX_SPREAD_USD or spread / bid > MAX_SPREAD_RATIO:
+        elif spread > MAX_SPREAD_USD or spread > bid * MAX_SPREAD_RATIO:
             errors.append(f"{path}.quote:SPREAD_LIMIT_EXCEEDED")
 
     trade = _object(security.get("trade"), path + ".trade", errors)
@@ -250,6 +256,11 @@ def _security(item, index, now, context):
         "symbol": symbol,
         "status": "DRAFT_REQUIRES_MANUAL_REVIEW",
         "execution_enabled": False,
+        "manual_review_required": [
+            "CURRENT_HALT_LULD_STATUS",
+            "BROKER_ORDER_AND_STOP_SUPPORT",
+            "INDEPENDENT_ACCOUNT_AND_OPEN_RISK_RECONCILIATION",
+        ],
         "quantity": quantity,
         "entry_limit_usd": _decimal_text(ask),
         "planned_stop_usd": _decimal_text(stop),
@@ -427,7 +438,8 @@ def evaluate(bundle: dict, now: datetime | None = None) -> dict:
         instant = now if now is not None else datetime.now(timezone.utc)
         if not isinstance(instant, datetime) or instant.tzinfo is None or instant.utcoffset() is None:
             raise ValueError("timezone-aware evaluation time required")
-        return _evaluate(bundle, instant.astimezone(timezone.utc))
+        with localcontext(_CALCULATION_CONTEXT):
+            return _evaluate(bundle, instant.astimezone(timezone.utc))
     except ZoneInfoNotFoundError:
         reason = "NEW_YORK_TIMEZONE_DATABASE_UNAVAILABLE"
     except (ValueError, TypeError, InvalidOperation, OverflowError, ArithmeticError, KeyError):

@@ -47,7 +47,7 @@ def fixtures():
         PAPER + "/v2/calendar": days,
         PAPER + "/v2/assets": [{"symbol": "TESTX", "exchange": "NASDAQ", "status": "active", "class": "us_equity"}],
         DATA + "/v2/stocks/snapshots": {"TESTX": {
-            "latestQuote": {"t": _iso(NOW - timedelta(seconds=1)), "bp": 2.05, "ap": 2.06, "bs": 100, "as": 200},
+            "latestQuote": {"t": _iso(NOW - timedelta(seconds=1)), "bp": 2.05, "ap": 2.06, "bs": 100, "as": 200, "c": ["R"]},
             "latestTrade": {"t": _iso(NOW - timedelta(seconds=2)), "p": 2.06},
             "prevDailyBar": {"t": "2026-10-07T04:00:00Z", "c": 2.0},
             "dailyBar": {"t": "2026-10-08T04:00:00Z", "c": 2.06}}},
@@ -92,6 +92,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual([], result["errors"])
         security = result["securities"][0]
         self.assertEqual(200, security["quote"]["ask_size"])
+        self.assertEqual(["R"], security["quote"]["conditions"])
         self.assertEqual(3, security["metrics"]["rvol_5m"])
         self.assertEqual(8000, security["metrics"]["day_volume"])
         self.assertEqual("2026-10-08T14:00:00Z", security["metrics"]["window_end"])
@@ -117,6 +118,20 @@ class ProviderTests(unittest.TestCase):
         result = self.collect()
         self.assertIn("TESTX:quote_or_trade_stale", result["errors"])
         self.assertNotIn("metrics", result["securities"][0])
+
+    def test_nonfirm_closed_unknown_or_mixed_quote_conditions_fail_closed(self):
+        for conditions in (["N"], ["U"], ["L"], ["Z"], ["UNKNOWN"], ["R", "N"],
+                           ["R", "R"], [], "R", None, {"R": True}):
+            with self.subTest(conditions=conditions):
+                self.payloads[DATA + "/v2/stocks/snapshots"]["TESTX"]["latestQuote"]["c"] = conditions
+                result = self.collect()
+                self.assertIn("TESTX:regular_quote_condition_unverified", result["errors"])
+                self.assertNotIn("quote", result["securities"][0])
+                self.assertNotIn("metrics", result["securities"][0])
+
+    def test_missing_quote_conditions_fail_closed(self):
+        self.payloads[DATA + "/v2/stocks/snapshots"]["TESTX"]["latestQuote"].pop("c")
+        self.assertIn("TESTX:regular_quote_condition_unverified", self.collect()["errors"])
 
     def test_missing_historical_bar_fails(self):
         self.payloads[DATA + "/v2/stocks/bars"]["bars"]["TESTX"].pop(0)
@@ -164,6 +179,25 @@ class ProviderTests(unittest.TestCase):
         result = self.collect()["securities"][0]["filings"]
         self.assertEqual("risk", result["status"])
         self.assertIn("REGISTRATION_OR_OFFERING:424B5", result["flags"])
+
+    def test_automatic_shelf_and_additional_registration_forms_block_clear(self):
+        for form in ("S-3ASR", "F-3ASR", "S-1MEF", "S-3MEF", "F-1MEF", "F-3MEF",
+                     "S-3D", "S-3DPOS", "F-3D", "F-3DPOS", "POS AM", "POSASR"):
+            with self.subTest(form=form):
+                table = self.payloads[SEC + "/submissions/CIK0000001234.json"]["filings"]["recent"]
+                table["form"][0] = form
+                result = self.collect()["securities"][0]["filings"]
+                self.assertEqual("risk", result["status"])
+                self.assertIn("REGISTRATION_OR_OFFERING:" + form, result["flags"])
+
+    def test_missing_filing_form_cannot_inherit_manual_clear(self):
+        for form in ("", "   ", None, 0):
+            with self.subTest(form=form):
+                table = self.payloads[SEC + "/submissions/CIK0000001234.json"]["filings"]["recent"]
+                table["form"][0] = form
+                result = self.collect()
+                self.assertIn("TESTX:sec_form_invalid", result["errors"])
+                self.assertNotIn("filings", result["securities"][0])
 
     def test_financing_8k_item_is_risk(self):
         table = self.payloads[SEC + "/submissions/CIK0000001234.json"]["filings"]["recent"]
@@ -258,6 +292,61 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual([], result["errors"])
         self.assertEqual(_iso(NOW + timedelta(seconds=9)), result["securities"][0]["quote"]["as_of"])
         self.assertEqual(_iso(NOW + timedelta(seconds=10)), result["market"]["as_of"])
+
+    def test_partial_bar_cannot_become_complete_while_other_requests_run(self):
+        original = self.getter
+        started = NOW.replace(minute=4, second=55)
+        finished = started + timedelta(seconds=10)
+        current = [started]
+        bars = self.payloads[DATA + "/v2/stocks/bars"]["bars"]["TESTX"]
+        # This bar is incomplete at the bar request, but its nominal bucket
+        # ends before the scan's final clock. Without a request-time cutoff,
+        # its unfinished volume/momentum masquerade as a completed window.
+        bars.append({**bars[-1], "t": "2026-10-08T14:00:00Z"})
+
+        def changing(url, headers, params):
+            if url.endswith("/news"):
+                current[0] = finished
+            if url.endswith("/stocks/snapshots"):
+                for item in ("latestQuote", "latestTrade"):
+                    self.payloads[url]["TESTX"][item]["t"] = _iso(current[0] - timedelta(seconds=1))
+            if url.endswith("/clock"):
+                self.payloads[url]["timestamp"] = _iso(current[0])
+            return original(url, headers, params)
+
+        class LiveClock(datetime):
+            @classmethod
+            def now(cls, tz=None): return current[0]
+
+        with patch("equity_guard.providers.datetime", LiveClock):
+            result = ReadOnlyProvider(changing, ENV).collect(self.context)
+        self.assertIn("TESTX:historical_or_current_bar_gap", result["errors"])
+        self.assertNotIn("metrics", result["securities"][0])
+        params = next(params for url, _, params in self.calls if url.endswith("/stocks/bars"))
+        self.assertEqual(_iso(started), params["end"])
+
+    def test_incomplete_current_bar_does_not_affect_completed_metrics(self):
+        bars = self.payloads[DATA + "/v2/stocks/bars"]["bars"]["TESTX"]
+        bars.append({**bars[-1], "t": "2026-10-08T14:00:00Z", "v": 99999999})
+        result = self.collect()
+        self.assertEqual([], result["errors"])
+        self.assertEqual(8000, result["securities"][0]["metrics"]["day_volume"])
+        self.assertEqual(3, result["securities"][0]["metrics"]["rvol_5m"])
+
+    def test_duplicate_prior_session_cannot_create_ten_day_rvol_baseline(self):
+        calendar = self.payloads[PAPER + "/v2/calendar"]
+        calendar[:] = [copy.deepcopy(calendar[-2]) for _ in range(10)] + [calendar[-1]]
+        result = self.collect()
+        self.assertIn("calendar_duplicate_session", result["errors"])
+        self.assertEqual([], result["securities"])
+        with self.assertRaisesRegex(ProviderError, "calendar_duplicate_session"):
+            _metrics(self.payloads[DATA + "/v2/stocks/bars"]["bars"]["TESTX"], calendar, NOW, 2.06, 2.0)
+
+    def test_calendar_reversed_or_non_five_minute_session_fails(self):
+        for opened, closed in (("16:00", "09:30"), ("09:31", "16:00"), ("09:30", "16:00:01")):
+            with self.subTest(opened=opened, closed=closed):
+                self.payloads[PAPER + "/v2/calendar"][-1].update(open=opened, close=closed)
+                self.assertIn("calendar_invalid", self.collect()["errors"])
 
     def test_fresh_trade_drives_day_change(self):
         self.payloads[DATA + "/v2/stocks/snapshots"]["TESTX"]["latestTrade"]["p"] = 2.10

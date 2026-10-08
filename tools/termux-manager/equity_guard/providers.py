@@ -35,6 +35,15 @@ _SEC_LOCK = threading.Lock()
 _SEC_NEXT_REQUEST = 0.0
 SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 SEC_FILE_RE = re.compile(r"^CIK\d{10}-submissions-\d{3,}\.json$")
+# SEC EDGAR submission types include automatic shelves, Rule 462(b)
+# additional-securities registrations and post-effective shelf amendments.
+# None of these may inherit a manual "clear" merely because the shorter
+# S-3/F-3 submission names were the only names recognized by the adapter.
+REGISTRATION_FORMS = frozenset({
+    "S-1", "S-1/A", "S-1MEF", "S-3", "S-3/A", "S-3ASR", "S-3D", "S-3DPOS", "S-3MEF",
+    "F-1", "F-1/A", "F-1MEF", "F-3", "F-3/A", "F-3ASR", "F-3D", "F-3DPOS", "F-3MEF",
+    "POS AM", "POSASR", "EFFECT",
+})
 DATA = "https://data.alpaca.markets"
 PAPER = "https://paper-api.alpaca.markets"
 SEC = "https://data.sec.gov"
@@ -188,6 +197,24 @@ def _session(day, field):
         raise ProviderError("calendar_invalid") from None
 
 
+def _validate_calendar(calendar):
+    """One row per actual session; duplicated dates cannot inflate RVOL history."""
+    if not isinstance(calendar, list) or not calendar:
+        raise ProviderError("calendar_invalid")
+    seen = set()
+    for day in calendar:
+        if not isinstance(day, dict):
+            raise ProviderError("calendar_invalid")
+        opened, closed = _session(day, "open"), _session(day, "close")
+        if (opened >= closed or opened.second or opened.microsecond or
+                closed.second or closed.microsecond or opened.minute % 5 or closed.minute % 5):
+            raise ProviderError("calendar_invalid")
+        session_date = opened.date()
+        if session_date in seen:
+            raise ProviderError("calendar_duplicate_session")
+        seen.add(session_date)
+
+
 def _metrics(bars, calendar, now, trade, previous_close):
     """Same-clock-slot 5-minute RVOL against ten prior complete sessions.
 
@@ -195,6 +222,7 @@ def _metrics(bars, calendar, now, trade, previous_close):
     today and ten previous eligible sessions. Partial or absent bars fail.
     Daily metrics use completed regular-session bars only (conservative volume).
     """
+    _validate_calendar(calendar)
     current = now.astimezone(NY)
     slot = current.replace(minute=(current.minute // 5) * 5, second=0, microsecond=0) - timedelta(minutes=5)
     today = next((d for d in calendar if d.get("date") == current.date().isoformat()), None)
@@ -296,6 +324,10 @@ class ReadOnlyProvider:
             raise ProviderError("provider_request_failed") from None
 
     def _bars(self, symbol, headers, now):
+        # The latest bucket may still be open while this request is made.
+        # Never let a later news/filings request crossing a five-minute boundary
+        # turn this partial observation into an apparently completed bar.
+        completed_through = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
         params = {"symbols": symbol, "timeframe": "5Min", "start": _iso(now - timedelta(days=45)),
                   "end": _iso(now), "adjustment": "split", "feed": "sip", "limit": 10000, "sort": "asc"}
         bars, tokens = [], set()
@@ -307,7 +339,9 @@ class ReadOnlyProvider:
             bars.extend(batch)
             token = payload.get("next_page_token")
             if not token:
-                return bars
+                # Enforce the cutoff independently of upstream end semantics.
+                return [bar for bar in bars
+                        if _dt(bar.get("t")) + timedelta(minutes=5) <= completed_through]
             if not isinstance(token, str) or len(token) > 2048 or token in tokens:
                 raise ProviderError("pagination_invalid")
             tokens.add(token)
@@ -398,6 +432,8 @@ class ReadOnlyProvider:
                     date.fromisoformat(filing_date)
                 except (ValueError, TypeError):
                     raise ProviderError("sec_date_invalid") from None
+                if not isinstance(forms[i], str) or not forms[i].strip():
+                    raise ProviderError("sec_form_invalid")
                 all_dates.append(filing_date)
                 if filing_date >= cutoff:
                     recent_rows.append({key: (values[i] if i < len(values) else "") for key, values in table.items() if isinstance(values, list)})
@@ -412,8 +448,8 @@ class ReadOnlyProvider:
         latest_acceptance = []
         latest_acceptance_complete = True
         for row in recent_rows:
-            form = row.get("form", "").upper()
-            if form in {"S-1", "S-1/A", "S-3", "S-3/A", "F-1", "F-1/A", "F-3", "F-3/A", "EFFECT"} or form.startswith("424B"):
+            form = row.get("form", "").strip().upper()
+            if form in REGISTRATION_FORMS or form.startswith("424B"):
                 flags.add("REGISTRATION_OR_OFFERING:" + form)
             if form in {"8-K", "8-K/A", "6-K", "6-K/A"}:
                 items = str(row.get("items", ""))
@@ -505,8 +541,7 @@ class ReadOnlyProvider:
             clock = self._get(PAPER + "/v2/clock", headers)
             calendar = self._get(PAPER + "/v2/calendar", headers,
                                  {"start": (started - timedelta(days=45)).date().isoformat(), "end": started.date().isoformat()})
-            if not isinstance(calendar, list):
-                raise ProviderError("calendar_invalid")
+            _validate_calendar(calendar)
             validate_clock(clock, calendar)
             assets = self._get(PAPER + "/v2/assets", headers, {"status": "active", "asset_class": "us_equity"})
             if not isinstance(assets, list):
@@ -576,9 +611,16 @@ class ReadOnlyProvider:
                     raise ProviderError("legacy_quote_size_units_unverified")
                 if not 0 <= (actual_now - quote_time).total_seconds() <= 15 or not 0 <= (actual_now - trade_time).total_seconds() <= 30:
                     raise ProviderError("quote_or_trade_stale")
+                # Both CTA CQS and UTP use R for regular, two-sided automated
+                # quotations. Fresh timestamps alone do not exclude nonfirm,
+                # closed or otherwise ineligible quote conditions. Unknown or
+                # mixed conditions require explicit support before acceptance.
+                if quote.get("c") != ["R"]:
+                    raise ProviderError("regular_quote_condition_unverified")
                 security["quote"] = {"bid": _num(quote.get("bp"), positive=True), "ask": _num(quote.get("ap"), positive=True),
                                      "bid_size": _num(quote.get("bs")), "ask_size": _num(quote.get("as")),
-                                     "as_of": _iso(quote_time), "size_interpretation": "shares_since_2025_11_03"}
+                                     "as_of": _iso(quote_time), "conditions": ["R"],
+                                     "size_interpretation": "shares_since_2025_11_03"}
                 security["trade"] = {"price": _num(trade.get("p"), positive=True), "as_of": _iso(trade_time)}
                 previous = snapshot.get("prevDailyBar", {})
                 previous_time = _dt(previous.get("t"))
