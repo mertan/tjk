@@ -120,7 +120,7 @@ def _arguments(argv):
     index = 0
     while index < len(argv):
         option = argv[index]
-        if option not in ("--observations", "--context", "--provider", "--symbols") or option in values:
+        if option not in ("--observations", "--context", "--provider", "--symbols", "--ranking-input") or option in values:
             raise InputError("invalid_arguments")
         if index + 1 == len(argv) or argv[index + 1].startswith("--"):
             raise InputError("invalid_arguments")
@@ -129,7 +129,9 @@ def _arguments(argv):
     if "--provider" in values:
         if values["--provider"] != "fintable" or any(k in values for k in ("--observations", "--context")):
             raise InputError("invalid_arguments")
-    elif "--symbols" in values:
+    elif "--symbols" in values or "--ranking-input" in values:
+        raise InputError("invalid_arguments")
+    if "--symbols" in values and "--ranking-input" in values:
         raise InputError("invalid_arguments")
     if "--symbols" in values:
         from .public_adapter import SYMBOL
@@ -159,8 +161,10 @@ def main(argv=None):
         if arguments is None:
             print("Usage: python3 -I -B public_scan.py "
                   "[--observations FILE] [--context FILE]\n"
-                  "       python3 -I -B public_scan.py --provider fintable [--symbols AAA,BBB]\n"
-                  "Personal noncommercial research; max 20 directory symbols; no order execution.")
+                  "       python3 -I -B public_scan.py --provider fintable "
+                  "[--ranking-input FILE | --symbols AAA,BBB]\n"
+                  "Personal noncommercial research; max 20 directory symbols; no order execution.\n"
+                  "Fintable needs permitted ranking input or explicit symbols; missing selection returns PAS.")
             return 0
         observations = (_read_json(arguments["--observations"])
                         if "--observations" in arguments else None)
@@ -168,6 +172,8 @@ def main(argv=None):
                    if "--context" in arguments else None)
         provider_options = ({"provider": arguments["--provider"], "symbols": arguments.get("--symbols")}
                             if "--provider" in arguments else {})
+        if "--ranking-input" in arguments:
+            provider_options["ranking_input"] = _read_json(arguments["--ranking-input"])
         result = _scan(
             observations=observations, context=context,
             environ={"SEC_USER_AGENT": os.environ.get("SEC_USER_AGENT", "")},

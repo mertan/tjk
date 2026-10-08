@@ -35,6 +35,26 @@ def fictional_history(symbol="FICT"):
                                        fictional_bar(300, "2.2", 300)]}
 
 
+def fictional_ranking(symbols=("FICT",), *, age=0, delay=0):
+    """Explicitly fictional operator-reviewed local export; no live quotes."""
+    return {"schema_version": 1, "source": {
+        "provider": "licensed_public_export",
+        "url": "https://fictional.example/export",
+        "terms_url": "https://fictional.example/terms",
+        "permission": "personal_automated_analysis",
+        "permission_reviewed_at": stamp(),
+        "verification": "operator_reviewed_original_export",
+        "retrieved_at": stamp(), "delay_seconds": delay,
+        "volume_scope": "consolidated_us",
+        "volume_basis": "session_cumulative_shares",
+    }, "records": [
+        {"symbol": symbol, "exchange": "NASDAQ", "price_usd": "2.%02d" % (index + 1),
+         "previous_close_usd": "2", "volume_shares": (index + 1) * 100000,
+         "as_of": stamp(age), "session_date": "2026-10-08"}
+        for index, symbol in enumerate(symbols)
+    ]}
+
+
 class FictionalDirectory:
     def __init__(self, symbols=("FICT",)):
         symbols = tuple(symbols)
@@ -44,12 +64,14 @@ class FictionalDirectory:
         self.errors = []
         self.mapping = {s: {"exchange": "NASDAQ", "cik": "0000000001"} for s in symbols}
         self.mapping_status = "available"
+        self.universe_calls = 0
         self.map_calls = 0
         self.filings_calls = []
         self.filing = {"status": "unknown", "flags": [], "coverage_days": 365,
                        "source_url": "https://data.sec.gov/submissions/CIK0000000001.json"}
 
     def universe(self):
+        self.universe_calls += 1
         return {"status": self.status, "entries": deepcopy(self.entries),
                 "sources": [], "errors": self.errors[:]}
 
@@ -74,7 +96,8 @@ class FictionalMarket:
 
     def prices(self, symbols):
         self.prices_calls.append(list(symbols))
-        return {"status": "available", "quotes": deepcopy(self.quotes),
+        return {"status": "available", "quotes": deepcopy({s: self.quotes[s]
+                for s in symbols if s in self.quotes}),
                 "sources": [], "errors": self.errors[:]}
 
     def history(self, symbol, day):
@@ -90,7 +113,8 @@ class PublicLiveTests(unittest.TestCase):
 
     def scan(self, **changes):
         options = {"provider": "fintable", "sources": self.directory,
-                   "market_source": self.market, "now": NOW, "environ": {}}
+                   "market_source": self.market, "now": NOW, "environ": {},
+                   "symbols": ["FICT"]}
         options.update(changes)
         result = public_adapter.scan(**options)
         self.assertEqual(result["decision"], "PAS")
@@ -138,11 +162,12 @@ class PublicLiveTests(unittest.TestCase):
         self.assertEqual(metrics["feed"], "iex")
         self.assertIn("not_session_adjusted_RVOL", metrics["basis"])
 
-    def test_default_directory_sample_has_hard_twenty_symbol_limit(self):
+    def test_explicit_selection_has_hard_twenty_symbol_limit(self):
         symbols = ["FICT" + str(n).zfill(2) for n in range(25)]
         self.directory = FictionalDirectory(reversed(symbols))
         self.market = FictionalMarket(symbols[:20])
-        result = self.scan(environ={"SEC_USER_AGENT": "FICTIONAL fixture contact"})
+        result = self.scan(symbols=symbols[:20],
+                           environ={"SEC_USER_AGENT": "FICTIONAL fixture contact"})
         self.assertEqual(self.market.prices_calls, [symbols[:20]])
         self.assertEqual(len(self.market.history_calls), 20)
         self.assertEqual(len(self.directory.filings_calls), 20)
@@ -150,7 +175,18 @@ class PublicLiveTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["requested_count"], 20)
         self.assertEqual(result["coverage"]["unobserved_count"], 5)
         self.assertFalse(result["coverage"]["complete_market_scan"])
-        self.assertEqual(result["coverage"]["selection"], "first_20_directory_symbols_alphabetically")
+        self.assertEqual(result["coverage"]["selection"], "explicit_symbols")
+
+    def test_missing_ranking_and_manual_selection_is_pas_without_network(self):
+        result = self.scan(symbols=None)
+        self.assertIn("RANKING_INPUT_REQUIRED", result["reasons"])
+        self.assertEqual(result["securities"], [])
+        self.assertEqual(result["coverage"]["requested_count"], 0)
+        self.assertEqual(self.directory.universe_calls, 0)
+        self.assertEqual(self.directory.map_calls, 0)
+        self.assertEqual(self.directory.filings_calls, [])
+        self.assertEqual(self.market.prices_calls, [])
+        self.assertEqual(self.market.history_calls, [])
 
     def test_explicit_selection_preserves_user_symbols_only(self):
         self.directory = FictionalDirectory(("FICT", "TEST"))
@@ -159,6 +195,129 @@ class PublicLiveTests(unittest.TestCase):
         self.assertEqual(self.market.prices_calls, [["TEST"]])
         self.assertEqual([r["symbol"] for r in result["securities"]], ["TEST"])
         self.assertEqual(result["coverage"]["selection"], "explicit_symbols")
+
+    def test_ranking_requests_best_twenty_instead_of_alphabetic_first_twenty(self):
+        symbols = ["A%02d" % index for index in range(24)] + ["ZHIGH"]
+        self.directory = FictionalDirectory(symbols)
+        self.market = FictionalMarket(symbols)
+        ranked = fictional_ranking(symbols)
+        expected = list(reversed(symbols))[:20]
+        result = self.scan(symbols=None, ranking_input=ranked,
+                           environ={"SEC_USER_AGENT": "FICTIONAL fixture contact"})
+        self.assertEqual(self.market.prices_calls, [expected])
+        self.assertEqual([symbol for symbol, day in self.market.history_calls], expected)
+        self.assertEqual([row["symbol"] for row in self.directory.filings_calls], expected)
+        self.assertEqual([row["symbol"] for row in result["securities"]], expected)
+        self.assertEqual(result["coverage"]["requested_count"], 20)
+        self.assertEqual(result["coverage"]["unobserved_count"], 5)
+        self.assertFalse(result["coverage"]["complete_market_scan"])
+        self.assertEqual(result["coverage"]["selection"], "volume_momentum_ranked_local_export")
+        self.assertEqual(result["ranking"]["selected_symbols"], expected)
+        self.assertEqual([row["symbol"] for row in result["research_priority"]], expected)
+        self.assertEqual(expected[0], "ZHIGH")
+        self.assertNotIn("A00", result["coverage"]["selected_symbols"])
+        for row in result["research_priority"]:
+            self.assertEqual(row["decision"], "PAS")
+            self.assertFalse(row["execution_enabled"])
+            self.assertFalse(row["executable_nbbo"])
+
+    def test_delayed_ranking_keeps_source_and_delay_separate_from_market_quote(self):
+        result = self.scan(symbols=None, ranking_input=fictional_ranking(age=600, delay=600))
+        priority, = result["research_priority"]
+        source = result["ranking"]["source"]
+        self.assertTrue(priority["delayed"])
+        self.assertEqual(priority["declared_delay_seconds"], 600)
+        self.assertEqual(priority["data_age_seconds"], 600)
+        self.assertEqual(priority["volume_scope"], "consolidated_us")
+        self.assertEqual(source["url"], "https://fictional.example/export")
+        self.assertEqual(source["provider"], "licensed_public_export")
+        self.assertEqual(source["retrieved_at"], stamp())
+        self.assertTrue(source["declared_delayed"])
+        self.assertEqual(source["assurance"], "OPERATOR_ATTESTATION_NOT_INDEPENDENTLY_VERIFIED")
+        row, = result["securities"]
+        self.assertEqual(row["source_timestamp"], stamp())
+        self.assertIsNone(row["delay_seconds"])
+        self.assertEqual(row["volume_scope"], "IEX_ONLY")
+        self.assertEqual(row["quote"]["status"], "DATA_UNAVAILABLE")
+        self.assertIn("SPREAD_UNAVAILABLE", row["reasons"])
+        self.assertIn("NEWS_CATALYST_UNVERIFIED", row["reasons"])
+
+    def test_invalid_or_stale_ranking_never_falls_back_to_directory_order(self):
+        stale = fictional_ranking(age=901)
+        unreviewed = fictional_ranking()
+        unreviewed["source"]["permission"] = "unknown"
+        for ranking_input in ({}, stale, unreviewed):
+            with self.subTest(ranking_input=ranking_input):
+                result = self.scan(symbols=None, ranking_input=ranking_input)
+                self.assertEqual(result["securities"], [])
+                self.assertEqual(result["research_priority"], [])
+                self.assertEqual(result["coverage"]["requested_count"], 0)
+                self.assertEqual(result["ranking"]["status"], "unavailable")
+        self.assertEqual(self.market.prices_calls, [])
+        self.assertEqual(self.market.history_calls, [])
+        self.assertEqual(self.directory.map_calls, 0)
+        self.assertEqual(self.directory.filings_calls, [])
+
+    def test_manual_symbols_cannot_override_or_mix_with_ranking_selection(self):
+        result = self.scan(symbols=["FICT"], ranking_input=fictional_ranking())
+        self.assertEqual(result["securities"], [])
+        self.assertEqual(result["coverage"]["requested_count"], 0)
+        self.assertEqual(self.directory.universe_calls, 0)
+        self.assertEqual(self.market.prices_calls, [])
+
+    def test_ranked_mode_preserves_fixed_risk_limits_without_issuing_trade_plan(self):
+        result = self.scan(symbols=None, ranking_input=fictional_ranking())
+        self.assertEqual(result["risk_limits"], {
+            "capital_try": "50000", "position_cap_try": "12500",
+            "planned_stop_pct": "3", "daily_loss_limit_try": "2500",
+            "min_price_usd": "1", "max_price_usd": "5",
+            "max_spread_usd": "0.05", "max_spread_pct": "2.500",
+        })
+        for row in result["research_priority"]:
+            for field in ("quantity", "entry_limit_usd", "planned_stop_usd", "order"):
+                self.assertNotIn(field, row)
+
+    def test_expiring_selected_rows_are_dropped_without_refilling_symbol_budget(self):
+        symbols = ["A%02d" % index for index in range(21)]
+        self.directory = FictionalDirectory(symbols)
+        self.market = FictionalMarket(symbols)
+        ranking_input = fictional_ranking(symbols, age=890, delay=600)
+        # The lowest-ranked row will remain current after every selected row
+        # expires. It must never trigger a twenty-first market/SEC lookup.
+        ranking_input["records"][0]["as_of"] = stamp(850)
+        expected = list(reversed(symbols))[:20]
+
+        class CollectionClock(datetime):
+            current = NOW
+
+            @classmethod
+            def now(cls, tz=None):
+                return cls.current.astimezone(tz) if tz else cls.current
+
+        original_prices = self.market.prices
+
+        def completing_prices(selected):
+            fetched = original_prices(selected)
+            CollectionClock.current = NOW + timedelta(seconds=11)
+            return fetched
+
+        with patch.object(public_live, "datetime", CollectionClock), \
+                patch.object(self.market, "prices", side_effect=completing_prices):
+            result = self.scan(symbols=None, ranking_input=ranking_input, now=None,
+                               environ={"SEC_USER_AGENT": "FICTIONAL fixture contact"})
+        self.assertEqual(self.market.prices_calls, [expected])
+        self.assertEqual([symbol for symbol, day in self.market.history_calls], expected)
+        self.assertEqual([row["symbol"] for row in self.directory.filings_calls], expected)
+        self.assertEqual(result["coverage"]["selected_symbols"], expected)
+        self.assertEqual(result["coverage"]["requested_count"], 20)
+        self.assertEqual(result["research_priority"], [])
+        self.assertEqual(result["ranking"]["research_priority"], [])
+        self.assertEqual(result["ranking"]["selected_symbols"], [])
+        self.assertEqual(result["ranking"]["status"], "unavailable")
+        self.assertIn("RANKING_EXPIRED_DURING_COLLECTION", result["ranking"]["errors"])
+        # Source audit metadata must use the same final clock, not scan start.
+        ranked_source = next(s for s in result["sources"] if s.get("provider") == "licensed_public_export")
+        self.assertEqual(ranked_source["retrieval_age_seconds"], 11)
 
     def test_invalid_duplicate_or_over_twenty_selection_makes_no_market_calls(self):
         for symbols in ([], "FICT", ["FICT", "FICT"], ["fict"], ["../FICT"],
