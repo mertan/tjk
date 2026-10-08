@@ -39,4 +39,15 @@ Uygulama bağımlılıksız bir Node.js sunucusudur. Statik barındırma tek ba�
 
 ## Model notu
 
-Model; normalize ganyan olasılığını, AGF’yi, handikap puanını ve gerçek oran hareketini birleştirir. Bu bir piyasa radarıdır, kesin kazanan modeli değildir. TJK açık akışı yatırılan toplam TL tutarını vermediği için “para yönü” oran daralması üzerinden gösterilir; kesin para miktarı olarak sunulmaz.
+Model; ganyan piyasasını, handikap puanını ve gerçek oran geçmişini 55:10:7 göreli ağırlıklarıyla birleştirir. AGF yalnızca bilgi amaçlı gösterilir; puan, sıralama, seçim ve sinyal gücüne katılmaz. Zorunlu veriler eksikse bütün koşu PAS olur. Model puanı ve sinyal gücü kalibre edilmiş kazanma olasılıkları değildir. Bu bir piyasa radarıdır, kesin kazanan modeli değildir. TJK açık akışı yatırılan toplam TL tutarını vermediği için “para yönü” oran daralması üzerinden gösterilir; kesin para miktarı olarak sunulmaz.
+
+
+## CSV regresyonları ve API davranışı
+
+Belmont 8 Ekim 2026 resmî CSV fixture'ı 5. ve 6. koşuların karışmasını tekrar sınar: 5. koşuda 9, 6. koşuda 8 kayıt, toplam 9 koşu. Dosya kaynağı ve SHA-256 değeri fixture yanında tutulur. Bu program verisi gerçek yarış sonucu değildir. Testler ağ bağlantısı gerektirmez: `npm test`.
+
+API `analysis.status` ve `reasonCodes` döndürür. PAS'ta `runners=[]` ve bütün adaylar `null` olur; ham gözlemler `observations.runners` içindedir. Böylece `status` alanını henüz tanımayan tüketiciler PAS yanıtından yeniden aday üretemez. `modelProbability` geriye uyumluluk adıdır, gerçek kazanma olasılığı değildir.
+
+**Canlı veri sınırı:** Mevcut kaynak koşuya özgü oran güncelleme zamanını doğrulamıyor. Canlı adaptör `SOURCE_FRESHNESS_UNVERIFIED / PAS` döndürür; koşunun planlanan saatini, günlük checksum saatini veya yerel indirme zamanını taze kotasyon kanıtı olarak kullanmaz. Puanlama motoru eksiksiz doğrulanmış girdiler için kullanılabilir; canlı adayları açmadan önce kaynak zamanının anlamı doğrulanmalıdır.
+
+Yerel doğrulama: Node.js 24.19.0 üzerinde 33 test başarılı. GitHub Actions Node 20/24 matrisi yalnız test ve sözdizimi kontrolü çalıştırır; dağıtım adımı içermez.

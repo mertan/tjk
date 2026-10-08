@@ -1,0 +1,23 @@
+{
+  "sourceUrl": "https://medya-cdn.tjk.org/raporftp/TJKPDF/2026/2026-10-08/CSV/GunlukYarisProgrami/08.10.2026-BelmontParkABD-GunlukYarisProgrami-TR.csv",
+  "retrievedAt": "2026-10-08T21:39:49.209095+00:00",
+  "sha256": "0fd8da652a21ccf6fbe5364e2038a8059cdd2ecd277a2ac7e152a3d8893c6734",
+  "encoding": "UTF-8 with optional BOM",
+  "description": "Unmodified official TJK program CSV, all nine races. A program fixture, not official race results. AGF is retained only as original source data; never a prediction feature.",
+  "venue": {
+    "KEY": "BELMONT",
+    "YER": "Belmont Park ABD",
+    "HIPODROM": "Belmont Park"
+  },
+  "regressions": {
+    "race5": {
+      "header": "5. Kosu : MAIDEN SATIŞ KOŞUSU 22.23",
+      "runners": 9
+    },
+    "race6": {
+      "header": "6. Kosu 22.57",
+      "runners": 8
+    }
+  },
+  "missingData": "The source omits KGS in the runner header despite an extra trailing field. Do not infer a meaning for unlabelled fields."
+}

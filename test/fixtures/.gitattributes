@@ -1,0 +1,2 @@
+# Keep source bytes intact so the provenance SHA-256 remains portable.
+*.csv -text

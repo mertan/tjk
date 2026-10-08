@@ -62,7 +62,7 @@ function setLoading(active) {
   el.refreshButton.classList.toggle('loading', active);
   if (!state.race) {
     el.loadingView.hidden = !active;
-    el.dashboard.hidden = active;
+    el.dashboard.hidden = true;
   }
 }
 
@@ -104,7 +104,10 @@ async function loadDay({ preserveVenue = true } = {}) {
     populateRaces(preferred);
     await loadRace({ force: true });
   } catch (error) {
-    showError(error.message);
+    state.race = null;
+    state.selectedRunner = null;
+    el.dashboard.hidden = true;
+    showError(`PAS — ${error.message}`);
     setConnected(false);
   } finally {
     setLoading(false);
@@ -135,14 +138,18 @@ async function loadRace({ silent = false, force = false } = {}) {
     });
     const data = await api(`/api/race?${query}`);
     const selectedNumber = state.selectedRunner?.number;
-    state.race = data;
+    state.race = { ...data, runners: data.analysis.status === 'PAS' ? (data.observations?.runners || []) : data.runners };
+    data.runners = state.race.runners;
     state.selectedRunner = data.runners.find((runner) => runner.number === selectedNumber) || data.runners[0] || null;
     renderDashboard();
     el.loadingView.hidden = true;
     el.dashboard.hidden = false;
     setConnected(true, data.race.status === 'AÇIK' ? 'Canlı' : data.race.status);
   } catch (error) {
-    showError(error.message);
+    state.race = null;
+    state.selectedRunner = null;
+    el.dashboard.hidden = true;
+    showError(`PAS — ${error.message}`);
     setConnected(false);
   } finally {
     setLoading(false);
@@ -157,15 +164,15 @@ function renderDashboard() {
   const surprise = data.analysis.picks.surprise;
 
   el.venueLabel.textContent = data.venue.name;
-  el.raceTitle.textContent = `${data.race.number}. Koşu · ${data.race.time}`;
+  el.raceTitle.textContent = `${data.race.number}. Koşu · ${data.race.time || '—'}`;
   el.raceMeta.textContent = [data.race.type, data.race.condition, data.race.distance, data.race.surface].filter(Boolean).join(' · ');
   el.raceStatus.textContent = data.race.status;
   el.updatedTime.textContent = `Güncellendi ${new Date(data.updatedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
 
-  el.confidenceChip.textContent = `${data.analysis.confidenceLabel} güven`;
+  el.confidenceChip.textContent = data.analysis.status === 'PAS' ? 'PAS' : `${data.analysis.confidenceLabel} sinyal`;
   el.leaderNumber.textContent = leader?.number ?? '—';
-  el.leaderName.textContent = leader?.name ?? 'Veri yok';
-  el.leaderSummary.textContent = data.analysis.summary;
+  el.leaderName.textContent = leader?.name ?? 'PAS — veri yetersiz';
+  el.leaderSummary.textContent = [data.analysis.summary, ...(data.analysis.reasonCodes || [])].join(' · ');
   el.confidenceValue.textContent = `${data.analysis.confidence}/100`;
   el.confidenceBar.style.width = `${data.analysis.confidence}%`;
 
@@ -174,7 +181,7 @@ function renderDashboard() {
   el.valuePick.textContent = value ? `${value.number} ${value.name}` : '—';
   el.valueEdge.textContent = value ? `Model farkı ${pct(value.edge, true)}` : 'Değer adayı yok';
   el.surprisePick.textContent = surprise ? `${surprise.number} ${surprise.name}` : 'Net sürpriz yok';
-  el.surpriseDetail.textContent = surprise ? `${fmt(surprise.odds)} Gny · ${pct(surprise.probability)}` : 'Piyasa dengeli';
+  el.surpriseDetail.textContent = surprise ? `${fmt(surprise.odds)} Gny · Puan ${fmt(surprise.probability, 1)}/100` : (data.analysis.status === 'PAS' ? 'Veri yetersiz' : 'Aday yok');
 
   el.methodology.textContent = data.methodology;
   el.warningText.textContent = data.warning;
@@ -187,7 +194,7 @@ function runnerTags(runner) {
   const tags = [];
   if (runner.modelRank === 1) tags.push('<span class="tag support">Model 1</span>');
   if (runner.agfRank === 1) tags.push('<span class="tag">AGF 1</span>');
-  tags.push(`<span class="tag ${movementClass(runner.movementPercent)}">${escapeHtml(runner.supportSignal)}</span>`);
+  if (runner.supportSignal) tags.push(`<span class="tag ${movementClass(runner.movementPercent)}">${escapeHtml(runner.supportSignal)}</span>`);
   return tags.join('');
 }
 
@@ -195,7 +202,7 @@ function renderRunners() {
   const selected = state.selectedRunner?.number;
   el.runnerList.innerHTML = state.race.runners.map((runner) => `
     <article class="runner-card ${runner.number === selected ? 'selected' : ''}" data-runner="${runner.number}" tabindex="0" role="button" aria-label="${escapeHtml(runner.number)} numara ${escapeHtml(runner.name)} detayını aç">
-      <div class="rank-badge">${runner.number}<small>${runner.modelRank}</small></div>
+      <div class="rank-badge">${runner.number}<small>${runner.modelRank ?? '—'}</small></div>
       <div class="runner-name">
         <h3>${escapeHtml(runner.name)}</h3>
         <div class="runner-tags">${runnerTags(runner)}</div>
@@ -205,7 +212,7 @@ function renderRunners() {
       <div class="metric mobile-move"><span>Hareket</span><strong class="${movementClass(runner.movementPercent)}">${movementArrow(runner.movementPercent)} ${pct(runner.movementPercent, true)}</strong></div>
       <div class="metric optional"><span>AGF</span><strong>${pct(runner.agfLatest)}</strong></div>
       <div class="metric optional"><span>Piyasa payı</span><strong>${pct(runner.marketProbability)}</strong></div>
-      <div class="metric mobile-model"><span>Model</span><strong>${pct(runner.modelProbability)}</strong><div class="probability-track"><i style="width:${Math.min(100, runner.modelProbability * 2.5)}%"></i></div></div>
+      <div class="metric mobile-model"><span>Model puanı</span><strong>${fmt(runner.modelProbability, 1)}</strong><div class="probability-track"><i style="width:${Math.min(100, (runner.modelProbability || 0) * 2.5)}%"></i></div></div>
     </article>
   `).join('');
 
