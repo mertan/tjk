@@ -27,6 +27,10 @@ Python **3.11+**, `America/New_York` saat dilimi verisi ve Linux/Termux dosya
 özellikleri gerekir. Python paket bağımlılığı yoktur. Kurulum sistem paketlerini
 güncellemez. Mevcut Python yoksa ya da ön koşul eksikse kurucu durur.
 
+Kurulum mevcut fakat 8081 başlamıyorsa [başlatma düzeltmesi ve güvenli tanılama](docs/STARTUP.md)
+belgesindeki yöntemi kullanın. Yeni kaynak kodu mevcut anahtar/ayar dosyalarının
+üzerine yazmadan çalıştırılabilir; `serve --check` salt okunur ön kontrol yapar.
+
 ## Termux'a kurulum
 
 Önce bu depoyu **yeni bir kaynak dizinine** klonlayın; incelenmiş tam commit SHA'sına

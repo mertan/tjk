@@ -23,6 +23,12 @@ NONCE_RETENTION_SECONDS = 90
 NAMESPACES = ("inputs", "jobs", "results")
 _ID = re.compile(r"[0-9a-f]{32}\Z")
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+# Android's /data ancestors can be searchable without being readable by the
+# Termux app UID. A traversal descriptor must not require directory-listing
+# permission. O_DIRECTORY still rejects symlinks when O_PATH and O_NOFOLLOW are
+# combined. Platforms without O_PATH keep the stricter, read-requiring fallback.
+_TRAVERSE_FLAGS = (getattr(os, "O_PATH", os.O_RDONLY) | os.O_DIRECTORY
+                   | os.O_NOFOLLOW | os.O_CLOEXEC)
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 
 
@@ -105,19 +111,27 @@ def _encode_json(value: dict) -> bytes:
 
 
 def _open_directory_path(path: Path) -> int:
-    """Traverse all components using nofollow; Path.resolve would hide symlinks."""
+    """Traverse nofollow without listing ancestors; return a readable final FD.
+
+    Path.resolve would hide symlinks. O_PATH descriptors are only used while
+    traversing: the returned descriptor must support listdir, flock and fsync.
+    """
     absolute = Path(os.path.abspath(os.fspath(path)))
     if ".." in Path(path).parts:
         raise StoreError("unsafe_directory")
-    fd = os.open("/", _DIR_FLAGS)
+    components = absolute.parts[1:]
+    fd = None
     try:
-        for component in absolute.parts[1:]:
-            next_fd = os.open(component, _DIR_FLAGS, dir_fd=fd)
+        fd = os.open("/", _TRAVERSE_FLAGS if components else _DIR_FLAGS)
+        for index, component in enumerate(components):
+            flags = _DIR_FLAGS if index == len(components) - 1 else _TRAVERSE_FLAGS
+            next_fd = os.open(component, flags, dir_fd=fd)
             os.close(fd)
             fd = next_fd
         return fd
     except OSError as exc:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
         raise StoreError("unsafe_directory") from exc
 
 
@@ -156,6 +170,16 @@ def read_private_key(path: Path) -> bytes:
     finally:
         if fd is not None:
             os.close(fd)
+        os.close(directory)
+
+
+def read_private_json(path: Path) -> dict:
+    """Read bounded JSON from an owned 0600 file without following symlinks."""
+    path = Path(path)
+    directory = _open_directory_path(path.parent)
+    try:
+        return decode_json(Store._read_bytes(directory, path.name, MAX_JSON_BYTES))
+    finally:
         os.close(directory)
 
 

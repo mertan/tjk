@@ -1,7 +1,6 @@
 """Authenticated, bounded analysis API. No file paths, shell, or order endpoints."""
 from __future__ import annotations
 
-import argparse
 import fcntl
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import http.client
@@ -13,12 +12,12 @@ import re
 import socket
 import socketserver
 import stat
-import sys
 import threading
 
 from .auth import Authenticator, AuthError, response_signature
+from .diagnostics import SafeArgumentParser, StartupFailure, report_failure
 from .jobs import JobError, Jobs
-from .storage import MAX_JSON_BYTES, Store, StoreError, decode_json, read_private_key
+from .storage import MAX_JSON_BYTES, Store, StoreError, decode_json, read_private_key, read_private_json
 
 SOCKET_TIMEOUT = 3.0
 CONNECTION_DEADLINE = 8.0
@@ -245,19 +244,27 @@ class ManagementServer(socketserver.ThreadingMixIn, HTTPServer):
         self._lifetime_lock = None
         self._closing = False
         # Independent descriptor: a second manager cannot share one Store's lock.
-        fd = os.open(".server.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
-                     0o600, dir_fd=store._root_fd)
+        try:
+            fd = os.open(".server.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=store._root_fd)
+        except OSError as exc:
+            raise StartupFailure("server_lock", "lock_open_failed") from exc
         try:
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                     or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
-                raise ValueError("unsafe_server_lock")
+                raise StartupFailure("server_lock", "unsafe_server_lock")
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise ValueError("manager_already_running") from None
+            except BlockingIOError as exc:
+                raise StartupFailure("server_lock", "manager_already_running") from exc
+            except OSError as exc:
+                raise StartupFailure("server_lock", "lock_unavailable") from exc
             self._lifetime_lock = fd
-            super().__init__(address, _Handler)
+            try:
+                super().__init__(address, _Handler)
+            except OSError as exc:
+                raise StartupFailure("socket_bind", "socket_unavailable") from exc
         except Exception:
             if self._lifetime_lock is not None:
                 self._lifetime_lock = None
@@ -337,34 +344,62 @@ def make_server(host, port, key, project_id, store, jobs=None, tailnet_bind=Fals
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Private analysis API; execution is always disabled")
+    parser = SafeArgumentParser(description="Private analysis API; execution is always disabled")
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--key-file", type=Path, required=True)
-    parser.add_argument("--project-id", required=True)
+    identity = parser.add_mutually_exclusive_group(required=True)
+    identity.add_argument("--project-id")
+    identity.add_argument("--config", type=Path, help="Read the existing private project.json without changing it")
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--tailnet-bind", action="store_true")
+    parser.add_argument("--check", action="store_true", help="Read-only configuration check; does not bind a socket or acquire/create a server lock")
     args = parser.parse_args(argv)
     store = server = None
+    stage = "bind_config"
+    result = 0
     try:
-        validate_bind(args.bind, args.tailnet_bind)
+        try:
+            validate_bind(args.bind, args.tailnet_bind)
+        except ValueError as exc:
+            raise StartupFailure(stage, "invalid_bind") from exc
+        if not 0 <= args.port <= 65535:
+            raise StartupFailure(stage, "invalid_port")
+        project_id = args.project_id
+        if args.config is not None:
+            stage = "project_config"
+            project_id = read_private_json(args.config).get("project_id")
+        stage = "identity"
+        if not isinstance(project_id, str) or re.fullmatch(r"[0-9a-f]{32}", project_id) is None:
+            raise StartupFailure(stage, "invalid_project_id")
+        stage = "authentication_key"
         key = read_private_key(args.key_file)
+        stage = "runtime"
         store = Store(args.root)
-        server = make_server(args.bind, args.port, key, args.project_id, store,
-                             tailnet_bind=args.tailnet_bind)
-        print(f"Analysis API listening on {args.bind}:{server.server_port}; execution_enabled=false", flush=True)
-        server.serve_forever(poll_interval=0.25)
+        if args.check:
+            print(json.dumps({"event": "manager_preflight_ok", "execution_enabled": False,
+                              "socket_bound": False, "server_lock_checked": False}, sort_keys=True))
+        else:
+            stage = "server_lock"
+            server = make_server(args.bind, args.port, key, project_id, store,
+                                 tailnet_bind=args.tailnet_bind)
+            print(f"Analysis API listening on {args.bind}:{server.server_port}; execution_enabled=false", flush=True)
+            stage = "serve"
+            server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
-        return 0
-    except (OSError, StoreError, ValueError):
-        print("Manager could not start; verify private project configuration and bind availability.", file=sys.stderr)
-        return 1
+        pass
+    except Exception as exc:
+        report_failure(stage, exc)
+        result = 1
     finally:
-        if server is not None:
-            server.server_close()
-        if store is not None:
-            store.close()
-    return 0
+        for resource in (server, store):
+            if resource is not None:
+                try:
+                    resource.server_close() if resource is server else resource.close()
+                except Exception as exc:
+                    report_failure("shutdown", exc)
+                    result = 1
+    return result
 
 
 if __name__ == "__main__":

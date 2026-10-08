@@ -1,6 +1,7 @@
 # Test ve inceleme sonucu
 
-8 Ekim 2026, Cloud Linux / Python 3.12.14 üzerinde **210 testin tamamı geçti**.
+8 Ekim 2026, Cloud Linux üzerinde **246 testin tamamı** hem Python **3.12.14**
+hem de Python **3.13.13** ile geçti. Testler ayrıcalıksız kullanıcıyla çalıştı.
 
 | Kapsam | Test |
 |---|---:|
@@ -12,8 +13,25 @@
 | Sabit tarama, tek iş ve kalıcı tekrar koruması | 9 |
 | Yeni kurulumdan gerçek CLI/HTTP uçtan uca akış | 1 |
 | HTTP protokolü, kimlik, sınırlar ve işlem kilidi | 20 |
+| Android benzeri üst dizin izinleri ve özel JSON okuma | 12 |
+| Başlatma hataları, gizli bilgi sızdırmayan tanılama ve salt okunur kontrol | 24 |
 
 Komut: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -v`.
+
+Başlatma düzeltmesinin regresyonunda, `0111` üst dizin altında bilinen anahtar
+doğrudan okunabilirken önceki `O_RDONLY` geçişinin gerçek `EACCES` ürettiği
+doğrulandı. `O_PATH` ile onarılan geçiş, son dizinin listeleme/kilit/sync işlevini
+ve symlink/izin korumalarını koruyor. Test gerçek Android SELinux politikasını
+taklit ettiğini iddia etmez.
+
+Gerçek dolu socket için `socket_bind / socket_unavailable / EADDRINUSE`, çalışan
+süreç kilidi için `server_lock / manager_already_running` doğrulandı. Başarısız
+bind kilidi bırakıyor; tekrar başlatma mümkün. Anahtar/yol/hesap işaretçileri,
+keyfi exception mesajları ve döngülü neden zincirleri tanılama çıktısına sızmıyor.
+`--check` dosya içeriklerini/izinlerini koruyor, socket veya kilit oluşturmuyor.
+`--config` ile başlangıç mevcut dosyaları koruyup yalnız normal runtime kilidini
+oluşturuyor. [Başlatma belgesi](STARTUP.md) aynı anahtarla yeni kaynak dizininden
+çalıştırma yolunu açıklıyor. CI Python 3.12 ve 3.13 matrisi kullanıyor.
 
 Uçtan uca test yeni geçici dizine kurdu, imzalı istemciyle JSON girdisi yükledi,
 pakete gömülü taramayı başlattı ve **PAS / execution_enabled=false** sonucunu
