@@ -120,12 +120,23 @@ def _arguments(argv):
     index = 0
     while index < len(argv):
         option = argv[index]
-        if option not in ("--observations", "--context") or option in values:
+        if option not in ("--observations", "--context", "--provider", "--symbols") or option in values:
             raise InputError("invalid_arguments")
         if index + 1 == len(argv) or argv[index + 1].startswith("--"):
             raise InputError("invalid_arguments")
         values[option] = argv[index + 1]
         index += 2
+    if "--provider" in values:
+        if values["--provider"] != "fintable" or any(k in values for k in ("--observations", "--context")):
+            raise InputError("invalid_arguments")
+    elif "--symbols" in values:
+        raise InputError("invalid_arguments")
+    if "--symbols" in values:
+        from .public_adapter import SYMBOL
+        symbols = values["--symbols"].split(",")
+        if not 1 <= len(symbols) <= 20 or len(set(symbols)) != len(symbols) or any(not SYMBOL.fullmatch(s) for s in symbols):
+            raise InputError("invalid_arguments")
+        values["--symbols"] = symbols
     return values
 
 
@@ -147,15 +158,20 @@ def main(argv=None):
         arguments = _arguments(list(sys.argv[1:] if argv is None else argv))
         if arguments is None:
             print("Usage: python3 -I -B public_scan.py "
-                  "[--observations FILE] [--context FILE]")
+                  "[--observations FILE] [--context FILE]\n"
+                  "       python3 -I -B public_scan.py --provider fintable [--symbols AAA,BBB]\n"
+                  "Personal noncommercial research; max 20 directory symbols; no order execution.")
             return 0
         observations = (_read_json(arguments["--observations"])
                         if "--observations" in arguments else None)
         context = (_read_json(arguments["--context"])
                    if "--context" in arguments else None)
+        provider_options = ({"provider": arguments["--provider"], "symbols": arguments.get("--symbols")}
+                            if "--provider" in arguments else {})
         result = _scan(
             observations=observations, context=context,
             environ={"SEC_USER_AGENT": os.environ.get("SEC_USER_AGENT", "")},
+            **provider_options,
         )
         if not isinstance(result, dict):
             raise ValueError("invalid_report")

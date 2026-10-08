@@ -380,7 +380,8 @@ def _scan(observations, context, environ, instant, sources, live_clock):
     return result
 
 
-def scan(observations=None, context=None, *, environ=None, now=None, sources=None):
+def scan(observations=None, context=None, *, environ=None, now=None, sources=None,
+         provider=None, symbols=None, market_source=None):
     """One bounded public scan. No manager connection, key read, or file write.
 
     Local provenance/positive-news reviews are explicit operator attestations;
@@ -392,7 +393,16 @@ def scan(observations=None, context=None, *, environ=None, now=None, sources=Non
         if not isinstance(instant, datetime) or instant.tzinfo is None or instant.utcoffset() is None:
             raise ValueError("invalid clock")
         instant = instant.astimezone(UTC)
-        result = _scan(observations, {} if context is None else context, environ, instant, sources, now is None)
+        if provider == "fintable":
+            if observations is not None or context is not None:
+                raise ValueError("mixed sources")
+            from .public_live import collect
+            result = collect(environ=environ, now=now, sources=sources,
+                             market_source=market_source, symbols=symbols)
+        elif provider is not None or symbols is not None or market_source is not None:
+            raise ValueError("invalid provider")
+        else:
+            result = _scan(observations, {} if context is None else context, environ, instant, sources, now is None)
         result["completed_at"] = _stamp(_now() if now is None else instant)
         return result
     except Exception:

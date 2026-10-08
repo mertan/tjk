@@ -6,6 +6,50 @@ kullanmaz. 8080/8081 servislerini durdurmaz veya yeniden başlatmaz. Tarama
 sonucunu yalnız standart çıktıya JSON olarak yazar; runtime kaydı veya emir
 oluşturmaz. `execution_enabled=false` her sonuçta korunur.
 
+## Anahtarsız Fintable araştırma modu
+
+```sh
+python3 -I -B tools/termux-manager/public_scan.py --provider fintable
+```
+
+Nasdaq Trader NASDAQ/NYSE dizinlerinden en fazla **20** uygun sembol seçilir.
+Varsayılan seçim alfabetik ilk 20 kayıttır: sembol dosyasında fiyat yoktur,
+bu seçim tüm piyasadaki en güçlü veya 1–5 USD aralığındaki en iyi 20 hisse
+iddiası değildir. Kendi en fazla 20 sembolünü `--symbols AAA,BBB` biçiminde
+verebilirsin; semboller o çalıştırmada indirilen dizinde bulunmalıdır. Bunlar
+sözdizimi örnekleridir, hisse önerisi değildir. Yinelenen/geçersiz/21+ sembol
+ve yerel gözlem/bağlam dosyasıyla bu modu karıştırmak reddedilir.
+
+Belgelenmiş Fintable public API'si bir toplu fiyat isteği yapar. Gözlenen
+fiyatı 1–5 USD olan kayıtlar için beş dakikalık geçmiş ve, gerçek SEC iletişim
+tanımı varsa, SEC finansman metadata'sı incelenir. Eski bir fiyat aralığı
+eşleşmesi güncel aday uygunluğu sayılmaz. `securities` her sorgulanan sembolün
+fiyatını, hacmini, kaynak zamanını, indirme zamanını, veri yaşını, haber/SEC
+durumunu ve PAS nedenlerini içerir; eksik değerler `null` kalır.
+
+Fintable hacmi yalnız **IEX** işlemleridir. Son iki ardışık, alındığı anda
+tamamlanmış normal seans mumu varsa beş dakikalık fiyat değişimi ve önceki
+beş dakikaya göre hacim oranı hesaplanır. Bu oran aynı saat diliminin geçmiş
+seans ortalamasına göre RVOL değildir; `rvol_5m=null` kalır. Toplama bitince
+fiyat ve mum tazeliği yeniden denetlenir. Fiyat için 30 saniye eşiği veya
+normal seans doğrulaması, önbellek gecikmesini sıfır yapmaz.
+
+Bu kaynak bir saate kadar önbellek kullanabilir, kapanışa dönebilir ve işlem
+için tasarlanmamıştır. Bid/ask ve haber sağlamaz; spread ve olumlu katalizör
+doğrulanamaz. SEC metadata bayrakları gösterilir; bayrak yokluğu ATM/dilution
+olmadığını ispatlamaz. Bu nedenle **bu otomatik mod tek başına İZLE üretmez**;
+eksikler `DATA_UNAVAILABLE / PAS` olarak kalır. Yerel lisanslı gözlem modunun
+önceden tanımlı İZLE kapıları ve PR #2 risk motoru değiştirilmemiştir.
+
+Tüm kaynaklar tek **24 GET / 60 saniye** bütçesini paylaşır; bu sınır yirmi
+sembolün tamamında derin SEC/geçmiş incelemesi garantisi vermez. Geçmiş
+isteklerinden sonra kalan bütçe yetmezse SEC sonucu bilinmiyor/PAS olur.
+Fintable istekleri aynı süreçte en fazla saniyede bir, SEC istekleri mevcut
+hız sınırıyla yapılır. 403/429 ve yönlendirmeler aşılmaz; otomatik tekrar yok.
+Çoklu süreçler/IP'nin toplam kotası operatörün sorumluluğundadır; bu komut
+periyodik servis başlatmaz. Kişisel, ticari olmayan kullanım ve Fintable
+atıf bağlantısı raporda korunur. [Kaynak koşulları](PUBLIC_DATA_SOURCES.md).
+
 ## Veri erişiminin sınırı
 
 Halka açık web sayfasını görebilmek, otomatik veri toplama veya yeniden kullanım
@@ -57,7 +101,7 @@ GIT_ASKPASS= SSH_ASKPASS= GIT_TERMINAL_PROMPT=0 \
 [ "$(git -C "$PUBLIC_SCAN_DIR" rev-parse FETCH_HEAD)" = "$PUBLIC_SCAN_SHA" ]
 git -C "$PUBLIC_SCAN_DIR" -c core.hooksPath=/dev/null \
   checkout --quiet --detach "$PUBLIC_SCAN_SHA"
-exec python3 -I -B "$PUBLIC_SCAN_DIR/tools/termux-manager/public_scan.py"
+exec python3 -I -B "$PUBLIC_SCAN_DIR/tools/termux-manager/public_scan.py" --provider fintable
 )
 ```
 
@@ -168,3 +212,28 @@ adresleri için güvenli hata `network_unavailable` idi; bu adresler mevcut
 Cloud ağ izinlerinde de yoktu. Güncel piyasa verisi alınmadı, SEC incelemesi
 yapılmadı ve bütün NASDAQ/NYSE piyasasının tarandığı iddia edilmedi.
 Termux'ta dağıtım veya telefon testi yapılmadı.
+
+## Fintable ekinin doğrulaması — 8 Ekim 2026
+
+Python **3.12.14** ve **3.13.5** altında **424 test geçti**: mevcut 377 teste
+16 sağlayıcı/transport, 29 rapor/entegrasyon ve 2 CLI testi eklendi. Sentetik
+veriler canlı aday raporu değildir. Risk motoru, broker bağlantısı, Termux
+servisleri veya gizli anahtar dosyaları değiştirilmedi.
+
+14:20:58 UTC'deki gerçek `--provider fintable` denemesi
+[`PUBLIC_SCAN_RUN_2026-10-08.json`](PUBLIC_SCAN_RUN_2026-10-08.json) dosyasında:
+**DATA_UNAVAILABLE / PAS; 0 doğrulanmış sembol, 0 İZLE**. İki Nasdaq Trader
+dosyasına erişim `network_unavailable`; evren doğrulanamadığı için bu tarama
+fiyat/SEC aşamasına geçmedi. Fintable public fiyat endpoint'ine ayrıca yapılan
+normal HTTPS denemesi de `network_unavailable` verdi. Çalışma ortamının ağ
+listesinde `www.nasdaqtrader.com`, `fintable.io`, `www.sec.gov`, `data.sec.gov`+yoktu; proxy/TLS/alan adı kısıtları değiştirilmedi. Canlı sağlayıcı yanıtı,
+güncel fiyat/hacim/haber veya telefonda uçtan uca çalışma doğrulanmadı.
+
+Bağımlılıklar ayrıca GitHub'dan kontrol edildi: [PR #1](https://github.com/mertan/tjk/pull/1)
+açık/taslak ve main tabanlı; [PR #2](https://github.com/mertan/tjk/pull/2) açık ve
+#1 tabanlı; [PR #3](https://github.com/mertan/tjk/pull/3) açık ve #2 tabanlı.
+Üçünün son PR Actions çalışması başarılı. Bu ek doğrudan PR #3'ün
+`688a0bc34182164120d5adde95dc82d2da5acabb` commit'i üzerine hazırlanmıştır;
+#1–#3 içeriğini içerir. Birleştirme sırası #1 → #2 → #3 → bu ek olmalıdır;
+taban değişikliklerinde kontroller yeniden çalıştırılmalıdır. Hiçbir PR
+birleştirilmedi veya mevcut PR dalı değiştirilmedi.

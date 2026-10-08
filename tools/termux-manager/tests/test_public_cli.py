@@ -102,6 +102,26 @@ class PublicCliTests(unittest.TestCase):
         self.assertTrue(output.startswith("Usage: python3 -I -B public_scan.py"))
         scan.assert_not_called()
 
+    def test_fintable_and_explicit_symbols_use_isolated_adapter(self):
+        status, output, scan = self.invoke(
+            ["--provider", "fintable", "--symbols", "AAA,BBB"], return_value=self.report)
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output), self.report)
+        self.assertEqual(scan.call_args.kwargs["provider"], "fintable")
+        self.assertEqual(scan.call_args.kwargs["symbols"], ["AAA", "BBB"])
+        self.assertIsNone(scan.call_args.kwargs["observations"])
+
+    def test_fintable_rejects_mixed_sources_and_invalid_selection_before_io(self):
+        for args in (["--symbols", "AAA"], ["--provider", "other"],
+                     ["--provider", "fintable", "--context", "not_read"],
+                     ["--provider", "fintable", "--observations", "not_read"],
+                     ["--provider", "fintable", "--symbols", "AAA,AAA"],
+                     ["--provider", "fintable", "--symbols", "https://example.com"],
+                     ["--provider", "fintable", "--symbols", "AAA,,BBB"],
+                     ["--provider", "fintable", "--symbols", ",".join("S" + str(i) for i in range(21))]):
+            with self.subTest(args=args):
+                self.assert_error(args, "invalid_arguments")
+
     def test_isolated_entrypoint_ignores_pythonpath_without_writes(self):
         rogue = self.root / "equity_guard"
         rogue.mkdir()
