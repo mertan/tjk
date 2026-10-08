@@ -1,9 +1,10 @@
-"""No-key, read-only official directory and SEC sources; never market quotes.
+"""No-key, read-only directory/SEC sources and shared bounded HTTP transport.
 
 Nasdaq Trader documents daily directory downloads for personal noncommercial
 use. SEC documents its public submissions JSON. Neither source supplies a
 current executable bid/ask. Their retrieval time is never a quote timestamp.
-No TradingView/Finviz page scraping or undocumented endpoints are implemented.
+The transport additionally admits the documented Fintable public API used by
+``fintable.py``. No page scraping or undocumented endpoints are implemented.
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ import os
 import re
 import ssl
 import time
-from datetime import datetime, timedelta, timezone
+import threading
+from datetime import date, datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
@@ -31,6 +33,9 @@ DIRECTORY_MAX_AGE = timedelta(hours=96)
 # bound can reject definitely stale/future dates without inventing a timezone.
 UNKNOWN_TIMEZONE_BOUND = timedelta(hours=14)
 SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-$^]{0,14}$")
+_FINTABLE_SYMBOL = r"[A-Z][A-Z0-9.\-]{0,9}"
+_FINTABLE_LOCK = threading.Lock()
+_FINTABLE_NEXT_REQUEST = 0.0
 KNOWN_FILINGS_ERRORS = frozenset({
     "sec_symbol_cik_mismatch", "sec_pagination_limit_reached",
     "sec_archive_path_invalid", "sec_schema_invalid", "sec_date_invalid",
@@ -52,7 +57,11 @@ def allowed_url(url):
     try:
         parsed = urlsplit(url)
         if (parsed.scheme != "https" or parsed.port not in (None, 443) or
-                parsed.username or parsed.password or parsed.query or parsed.fragment):
+                parsed.username or parsed.password or parsed.fragment):
+            return False
+        if parsed.hostname == "fintable.io":
+            return _fintable_allowed_url(url)
+        if parsed.query:
             return False
         if url in {NASDAQ_DIRECTORY, NYSE_DIRECTORY, SEC_MAPPING}:
             return True
@@ -60,6 +69,38 @@ def allowed_url(url):
             r"/submissions/CIK\d{10}(?:-submissions-\d{3,})?\.json", parsed.path))
     except (TypeError, ValueError):
         return False
+
+
+def _fintable_allowed_url(url):
+    """Only our documented, canonical, bounded no-key API requests."""
+    prices = re.fullmatch(
+        r"https://fintable\.io/api/v2/prices\?symbols=(" + _FINTABLE_SYMBOL +
+        r"(?:," + _FINTABLE_SYMBOL + r"){0,19})", url)
+    if prices:
+        symbols = prices.group(1).split(",")
+        return len(symbols) == len(set(symbols))
+    history = re.fullmatch(
+        r"https://fintable\.io/api/v2/prices/" + _FINTABLE_SYMBOL +
+        r"/history\?timeframe=5min&start=(\d{4}-\d{2}-\d{2})&end=(\d{4}-\d{2}-\d{2})&limit=1000", url)
+    if history:
+        start, end = (date.fromisoformat(value) for value in history.groups())
+        return timedelta(0) <= end - start <= timedelta(days=1)
+    return False
+
+
+def _pace_fintable(deadline):
+    """Conservative process-wide bound of one Fintable request per second."""
+    global _FINTABLE_NEXT_REQUEST
+    with _FINTABLE_LOCK:
+        remaining = deadline - time.monotonic()
+        wait = max(0, _FINTABLE_NEXT_REQUEST - time.monotonic())
+        if remaining <= 0 or wait >= remaining:
+            raise PublicSourceError("collection_budget_exceeded")
+        if wait:
+            time.sleep(wait)
+        if time.monotonic() >= deadline:
+            raise PublicSourceError("collection_budget_exceeded")
+        _FINTABLE_NEXT_REQUEST = time.monotonic() + 1.0
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -107,6 +148,8 @@ class PublicTransport:
         try:
             if urlsplit(url).hostname in {"www.sec.gov", "data.sec.gov"}:
                 _pace_sec(self.deadline)
+            elif urlsplit(url).hostname == "fintable.io":
+                _pace_fintable(self.deadline)
             remaining = self.deadline - time.monotonic()
             if remaining <= 0:
                 raise PublicSourceError("collection_budget_exceeded")
