@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Read-only manifest audit. Does not train, publish, bet or start any service. */
 import { readFile } from 'node:fs/promises';
+import { auditBundle } from '../model-v3/training-bundle.mjs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ARTIFACT_SCHEMA_V3, FEATURE_NAMES_V3, validateArtifact, validateHistory } from '../model-v3/live-inference.mjs';
@@ -50,15 +51,18 @@ function options(argv) {
     history: process.env.V3_HISTORY_PATH || '.v2-data/races-yer.json'
   };
   const positional = [];
+  let explicitModelOrHistory = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--model' || arg === '--history') {
+    if (arg === '--model' || arg === '--history' || arg === '--bundle') {
+      if (arg !== '--bundle') explicitModelOrHistory = true;
       const value = argv[++i];
       if (!value || value.startsWith('--')) throw new Error('INVALID_ARGUMENTS');
       opts[arg.slice(2)] = value;
     } else if (arg.startsWith('--')) throw new Error('INVALID_ARGUMENTS');
     else positional.push(arg);
   }
+  if (opts.bundle && (explicitModelOrHistory || positional.length)) throw new Error('INVALID_ARGUMENTS');
   if (positional.length > 2) throw new Error('INVALID_ARGUMENTS');
   if (positional[0]) opts.model = positional[0];
   if (positional[1]) opts.history = positional[1];
@@ -68,8 +72,9 @@ function options(argv) {
 export async function runAudit(argv = process.argv.slice(2)) {
   let opts;
   try { opts = options(argv); } catch {
-    return { status: 'PAS', reasonCodes: ['INVALID_ARGUMENTS'], usage: 'node scripts/check-v3-live.mjs [--model PATH] [--history PATH]' };
+    return { status: 'PAS', reasonCodes: ['INVALID_ARGUMENTS'], usage: 'node scripts/check-v3-live.mjs [--model PATH] [--history PATH] | --bundle DIR' };
   }
+  if (opts.bundle) return auditBundle(opts.bundle);
   const read = async (path, reason) => {
     try { return { value: JSON.parse(await readFile(path, 'utf8')), reasons: [] }; }
     catch { return { value: null, reasons: [reason] }; }
@@ -85,5 +90,5 @@ export async function runAudit(argv = process.argv.slice(2)) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const report = await runAudit();
   console.log(JSON.stringify(report, null, 2));
-  process.exitCode = report.status === 'VALID_MANIFEST' ? 0 : 1;
+  process.exitCode = ['VALID_MANIFEST', 'VERIFIED_TRAINING'].includes(report.status) ? 0 : 1;
 }
