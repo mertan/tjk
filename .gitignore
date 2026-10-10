@@ -1,2 +1,4 @@
 .backtest-cache/
 node_modules/
+.v2-data/
+.backtest-cache

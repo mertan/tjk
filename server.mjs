@@ -217,7 +217,7 @@ function parseAgf(value) {
 
 // TJK uses semicolon-delimited CSV. Quoted cells may contain separators,
 // escaped quotes or line breaks, so splitting a physical line is unsafe.
-function programCsvRecords(csvText) {
+export function programCsvRecords(csvText) {
   const records = [];
   let record = [];
   let field = '';
