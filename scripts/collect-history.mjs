@@ -35,7 +35,7 @@ async function get(url, json) {
       }
     });
     if (text === null) return null;
-    await writeFile(file, text);
+    await writeFile(file, text).catch(() => {});
   }
   if (!json) return text;
   try { return JSON.parse(text); } catch { return null; }
