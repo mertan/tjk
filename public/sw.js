@@ -1,4 +1,4 @@
-const CACHE = 'tjk-radar-v2-no-agf';
+const CACHE = 'tjk-radar-v3-test-verified-history';
 const STATIC = ['/', '/styles.css', '/app.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

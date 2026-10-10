@@ -13,6 +13,7 @@ import { buildExamples, FEATURE_NAMES, inferFormOrder } from '../model-v2/featur
 import { scores, softmax, train } from '../model-v2/model.mjs';
 import { buildExtras, EXTRA_NAMES } from '../model-v3/history-features.mjs';
 import { marketGate, marketProbabilities, calibrationStats, fitTemperature, valueBets } from '../model-v3/market.mjs';
+import { summarizeWagers } from '../model-v3/evaluation.mjs';
 import { predictAtCutoff, wilson } from '../backtest.mjs';
 import { buildProgramCsvUrl, programForVenueCsv } from '../server.mjs';
 
@@ -39,7 +40,7 @@ const examples = buildExamples(races, { newestLast: order.newestLast })
   .filter((e) => e.positions.filter((p) => p === 1).length === 1)
   .map((e) => {
     const quote = odds[e.id];
-    const gate = marketGate(e.numbers, quote, raceById.get(e.id));
+    const gate = marketGate(e.numbers, quote);
     const q = gate.ok ? marketProbabilities(e.numbers.map((n) => quote.runners[n].odds)) : null;
     const xV2 = e.X;
     const xV3 = q ? e.X.map((row, i) => [...row, ...extras.get(e.id)[i], Math.log(q[i])]) : null;
@@ -79,17 +80,6 @@ function rate(hits, total) {
   const [lo, hi] = wilson(hits, total);
   return { hits, total, rate: pct(hits / total), ci95: [pct(lo), pct(hi)] };
 }
-function seeded(seed) { return () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32); }
-function bootMeanCI(values, seed = 11) {
-  if (values.length < minSample) return null;
-  const rnd = seeded(seed);
-  const boots = Array.from({ length: 2000 }, () => {
-    let s = 0;
-    for (let k = 0; k < values.length; k += 1) s += values[Math.floor(rnd() * values.length)];
-    return s / values.length;
-  }).sort((a, b) => a - b);
-  return [boots[50], boots[1949]];
-}
 
 const rows = [];
 const folds = [];
@@ -98,18 +88,31 @@ for (const month of months) {
   const trainSet = examples.filter((e) => e.date < `${calMonth}-01`);
   const calSet = examples.filter((e) => e.date.startsWith(calMonth));
   const testSet = examples.filter((e) => e.date.startsWith(month));
-  if (!testSet.length || !trainSet.length || !calSet.length) continue;
-  const w2 = train(trainSet.map((e) => ({ X: e.xV2, positions: e.positions })), { l2, epochs: 300 });
+  if (!testSet.length) continue;
   const v3Train = trainSet.filter((e) => e.xV3);
-  const w3 = train(v3Train.map((e) => ({ X: e.xV3, positions: e.positions })), { l2, epochs: 300 });
+  const v3Cal = calSet.filter((e) => e.xV3);
+  const v2Reasons = [];
+  const v3Reasons = [];
+  if (!trainSet.length) v2Reasons.push('V2_TRAINING_UNAVAILABLE');
+  if (!calSet.length) v2Reasons.push('V2_CALIBRATION_UNAVAILABLE');
+  if (!v3Train.length) v3Reasons.push('V3_TRAINING_UNAVAILABLE');
+  if (!v3Cal.length) v3Reasons.push('V3_CALIBRATION_UNAVAILABLE');
+  const w2 = v2Reasons.length ? null : train(trainSet.map((e) => ({ X: e.xV2, positions: e.positions })), { l2, epochs: 300 });
+  const w3 = v3Reasons.length ? null : train(v3Train.map((e) => ({ X: e.xV3, positions: e.positions })), { l2, epochs: 300 });
   const s2 = (e) => scores(w2, e.xV2);
   const s3 = (e) => scores(w3, e.xV3);
-  const t2 = fitTemperature(calSet.map((e) => ({ s: s2(e), win: e.positions.indexOf(1) })));
-  const t3 = fitTemperature(calSet.filter((e) => e.xV3).map((e) => ({ s: s3(e), win: e.positions.indexOf(1) })));
-  folds.push({ month, trainRaces: trainSet.length, v3TrainRaces: v3Train.length, calibrationMonth: calMonth, calRaces: calSet.length, tempV2: r4(t2), tempV3: r4(t3) });
+  const t2 = w2 ? fitTemperature(calSet.map((e) => ({ s: s2(e), win: e.positions.indexOf(1) }))) : null;
+  const t3 = w3 ? fitTemperature(v3Cal.map((e) => ({ s: s3(e), win: e.positions.indexOf(1) }))) : null;
+  if (w2 && t2 === null) v2Reasons.push('V2_CALIBRATION_INVALID');
+  if (w3 && t3 === null) v3Reasons.push('V3_CALIBRATION_INVALID');
+  folds.push({ month, trainRaces: trainSet.length, v3TrainRaces: v3Train.length,
+    calibrationMonth: calMonth, calRaces: calSet.length, v3CalRaces: v3Cal.length,
+    tempV2: r4(t2), tempV3: r4(t3),
+    v2Status: v2Reasons.length ? 'PAS' : 'OK', v3Status: v3Reasons.length ? 'PAS' : 'OK',
+    v2Reasons, v3Reasons });
   for (const e of testSet) {
-    const p2 = softmax(s2(e).map((s) => s * t2));
-    const p3 = e.xV3 ? softmax(s3(e).map((s) => s * t3)) : null;
+    const p2 = v2Reasons.length ? null : softmax(s2(e).map((s) => s * t2));
+    const p3 = e.xV3 && !v3Reasons.length ? softmax(s3(e).map((s) => s * t3)) : null;
     const v1 = await v1Leader(e);
     const race = raceById.get(e.id);
     const dividends = e.numbers.map((n) => race.runners.find((r) => r.number === n)?.closingOdds ?? null);
@@ -121,14 +124,22 @@ for (const month of months) {
       marketPAS: e.gate.ok ? null : e.gate.reasons,
       v1: v1.status === 'OK' ? outcome(e.numbers.indexOf(v1.leader)) : null,
       v1Reasons: v1.status === 'OK' ? null : v1.reasonCodes,
-      v2: outcome(pick(p2)),
+      v2: p2 ? outcome(pick(p2)) : null,
+      v2Reasons: p2 ? null : v2Reasons,
+      v3Reasons: p3 ? null : [...new Set([...v3Reasons, ...e.gate.reasons])],
       v3: p3 ? outcome(pick(p3)) : null,
       fav: e.q ? outcome(pick(e.q)) : null,
       agf: agfOk ? outcome(pick(e.agf)) : null,
       win: e.positions.indexOf(1),
       p2, p3, q: e.q,
       bets: p3 ? valueBets({ p: p3, quoteOdds: e.quoteOdds, dividends, positions: e.positions }) : null,
-      favBet: e.q ? (() => { const i = pick(e.q); return { stake: 1, ret: e.positions[i] === 1 ? dividends[i] ?? 0 : 0 }; })() : null
+      favBet: e.q ? (() => {
+        const i = pick(e.q);
+        const win = e.positions[i] === 1;
+        const validDividend = Number.isFinite(dividends[i]) && dividends[i] > 0;
+        return { stake: 1, ret: win && validDividend ? dividends[i] : 0,
+          wins: win ? 1 : 0, missingDividend: win && !validDividend ? 1 : 0 };
+      })() : null
     });
   }
 }
@@ -156,23 +167,9 @@ function summarize(set) {
 function roi(set) {
   const out = {};
   for (const edge of ['0.05', '0.10', '0.20']) {
-    const perRace = set.filter((r) => r.bets).map((r) => r.bets[edge]);
-    const stake = perRace.reduce((s, b) => s + b.stake, 0);
-    const ret = perRace.reduce((s, b) => s + b.ret, 0);
-    const retT5 = perRace.reduce((s, b) => s + b.retAtQuote, 0);
-    const net = perRace.filter((b) => b.stake).map((b) => b.ret / b.stake - 1);
-    out[`edge>=${edge}`] = {
-      bets: stake, winners: perRace.reduce((s, b) => s + b.wins, 0), racesWithBet: net.length,
-      roiDividend: stake ? pct(ret / stake - 1) : null,
-      roiDividendCI95: bootMeanCI(net)?.map(pct) ?? null,
-      roiDividendHaircut5: stake ? pct((ret * 0.95) / stake - 1) : null,
-      roiDividendHaircut10: stake ? pct((ret * 0.9) / stake - 1) : null,
-      roiAtT5QuoteOptimistic: stake ? pct(retT5 / stake - 1) : null
-    };
+    out[`edge>=${edge}`] = summarizeWagers(set.filter((r) => r.bets).map((r) => r.bets[edge]), { minSample });
   }
-  const fav = set.filter((r) => r.favBet);
-  const favRet = fav.reduce((s, r) => s + r.favBet.ret, 0);
-  out.marketFavouriteFlat = { bets: fav.length, roiDividend: fav.length ? pct(favRet / fav.length - 1) : null, roiDividendCI95: bootMeanCI(fav.map((r) => r.favBet.ret - 1))?.map(pct) ?? null };
+  out.marketFavouriteFlat = summarizeWagers(set.filter((r) => r.favBet).map((r) => r.favBet), { minSample });
   return out;
 }
 
@@ -185,6 +182,7 @@ const report = {
   overall: { ...summarize(rows), roi: roi(rows) },
   sameRacesAllModels: summarize(same),
   marketPASReasons: rows.reduce((acc, r) => { for (const x of r.marketPAS || []) acc[x] = (acc[x] || 0) + 1; return acc; }, {}),
+  v3PASReasons: rows.reduce((acc, r) => { for (const x of r.v3Reasons || []) acc[x] = (acc[x] || 0) + 1; return acc; }, {}),
   v1PASReasons: rows.reduce((acc, r) => { for (const x of r.v1Reasons || []) acc[x] = (acc[x] || 0) + 1; return acc; }, {}),
   featureNamesV3: [...FEATURE_NAMES, ...EXTRA_NAMES, 'logMarketProbT5']
 };

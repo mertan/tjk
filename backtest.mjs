@@ -17,6 +17,7 @@ export function postTimes(date, times) {
   return times.map((time) => {
     const match = typeof time === 'string' ? time.match(/^(\d{1,2})[.:](\d{2})$/) : null;
     if (!match) return null;
+    if (Number(match[1]) > 23 || Number(match[2]) > 59) return null;
     const minutes = Number(match[1]) * 60 + Number(match[2]);
     if (previous >= 0 && minutes < previous) dayOffset += 1;
     previous = minutes;
@@ -34,8 +35,18 @@ export function pointsAtCutoff(points, cutoffMs) {
 /**
  * runners: [{ number, name, out, history: [{label, odds}], program }]
  * program: the parsed pre-race program runner (rating, agf) or undefined.
+ * inputSnapshotAt: trusted capture time for this entire pre-race field/program,
+ * including withdrawals and optional AGF baseline. The archive CLI cannot supply
+ * it. Never attach a made-up capture time to a post-race archive.
  */
-export function predictAtCutoff({ race, programRace, foreign = false, runners, cutoffMs, limits = FRESHNESS_LIMITS }) {
+export function predictAtCutoff({ race, programRace, foreign = false, runners, cutoffMs, inputSnapshotAt = null, limits = FRESHNESS_LIMITS }) {
+  const capturedAt = parseSourceTime(inputSnapshotAt);
+  const snapshotVerified = Number.isFinite(capturedAt) && Number.isFinite(cutoffMs) && capturedAt <= cutoffMs;
+  if (!snapshotVerified) return {
+    status: 'PAS', reasonCodes: ['PRE_CUTOFF_INPUT_SNAPSHOT_UNVERIFIED'],
+    leader: null, marketFavourite: null, agfLeader: null, latestPointUsedAt: null,
+    cutoffAt: Number.isFinite(cutoffMs) ? new Date(cutoffMs).toISOString() : null
+  };
   const inputs = [];
   const quoteTimes = [];
   for (const runner of runners) {
@@ -130,7 +141,8 @@ function rate(hits, total, minSample) {
  * when at least minSample settled predictions exist; otherwise counts only.
  */
 export function summarize(records, { minSample = 30 } = {}) {
-  const settled = records.filter((record) => Array.isArray(record.winners) && record.winners.length);
+  if (!Number.isSafeInteger(minSample) || minSample < 1) throw new RangeError('INVALID_MIN_SAMPLE');
+  const settled = records.filter((record) => record.resultCheck === 'CONFIRMED' && Array.isArray(record.winners) && record.winners.length);
   const predicted = settled.filter((record) => record.prediction.status === 'OK');
   const pasReasons = {};
   for (const record of settled.filter((item) => item.prediction.status !== 'OK')) {
