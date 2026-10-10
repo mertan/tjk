@@ -1,5 +1,5 @@
 /** Research accounting only. Each bootstrap draw resamples whole races. */
-const validRecords = (records) => Array.isArray(records) && records.every((record) =>
+const validRecords = (records) => Array.isArray(records) && Array.from(records).every((record) =>
   record && Number.isSafeInteger(record.stake) && record.stake >= 0
   && Number.isFinite(record.ret) && record.ret >= 0
   && Number.isSafeInteger(record.wins ?? 0) && (record.wins ?? 0) >= 0 && (record.wins ?? 0) <= record.stake

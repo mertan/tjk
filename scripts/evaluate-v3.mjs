@@ -15,6 +15,7 @@ import { buildExtras, EXTRA_NAMES } from '../model-v3/history-features.mjs';
 import { marketGate, marketProbabilities, calibrationStats, fitTemperature, valueBets } from '../model-v3/market.mjs';
 import { summarizeWagers } from '../model-v3/evaluation.mjs';
 import { predictAtCutoff, wilson } from '../backtest.mjs';
+import { parseSourceTime } from '../race-gates.mjs';
 import { buildProgramCsvUrl, programForVenueCsv } from '../server.mjs';
 
 const opts = {};
@@ -41,6 +42,15 @@ const examples = buildExamples(races, { newestLast: order.newestLast })
   .map((e) => {
     const quote = odds[e.id];
     const gate = marketGate(e.numbers, quote);
+    const sourceRace = raceById.get(e.id);
+    const postMs = parseSourceTime(`${e.date} ${sourceRace?.time}:00`);
+    const expectedCutoff = postMs === null ? null : postMs - 5 * 60_000;
+    if (expectedCutoff === null) gate.reasons.push('RACE_POST_TIME_INVALID');
+    else if (quote) {
+      if (quote.cutoffMs !== expectedCutoff) gate.reasons.push('CUTOFF_RACE_MISMATCH');
+      if (quote.postMs !== undefined && quote.postMs !== postMs) gate.reasons.push('POST_RACE_MISMATCH');
+    }
+    gate.ok = gate.reasons.length === 0;
     const q = gate.ok ? marketProbabilities(e.numbers.map((n) => quote.runners[n].odds)) : null;
     const xV2 = e.X;
     const xV3 = q ? e.X.map((row, i) => [...row, ...extras.get(e.id)[i], Math.log(q[i])]) : null;
@@ -176,7 +186,14 @@ function roi(set) {
 const same = rows.filter((r) => r.v1 && r.v3 && r.fav);
 const report = {
   generatedAt: new Date().toISOString(),
-  method: { folds: 'expanding train (< M-1) / calibration (M-1) / test (M)', l2, cutoffMin: 5, maxQuoteAgeMin: 12, formOrder: order },
+  reportKind: 'UNVERIFIED_ARCHIVAL_RESEARCH',
+  backtestVerified: false,
+  verification: {
+    status: 'UNVERIFIED',
+    reasonCodes: ['ARCHIVAL_PROGRAM_PROVENANCE_UNVERIFIED', 'PRE_CUTOFF_INPUT_SNAPSHOT_UNVERIFIED'],
+    note: 'Archive timestamps do not prove that program, withdrawals and inputs were captured before cutoff. These research metrics are not independently verified backtest results.'
+  },
+  method: { inputProvenance: 'archival_unverified', folds: 'expanding train (< M-1) / calibration (M-1) / test (M)', l2, cutoffMin: 5, maxQuoteAgeMin: 12, formOrder: order },
   folds,
   byMonth: Object.fromEntries(months.map((m) => [m, { ...summarize(rows.filter((r) => r.month === m)), roi: roi(rows.filter((r) => r.month === m)) }])),
   overall: { ...summarize(rows), roi: roi(rows) },

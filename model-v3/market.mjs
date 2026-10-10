@@ -23,7 +23,7 @@ export function marketGate(numbers, quote, limits = MARKET_LIMITS) {
     reasons.add('INVALID_RUNNER_SET');
     return result();
   }
-  if (numbers.some((number) => !Number.isSafeInteger(number) || number < 1 || number > 30)) {
+  if (Array.from(numbers).some((number) => !Number.isSafeInteger(number) || number < 1 || number > 30)) {
     reasons.add('INVALID_RUNNER_NUMBER');
   }
   if (new Set(numbers).size !== numbers.length) reasons.add('DUPLICATE_RUNNER_NUMBER');
@@ -71,7 +71,7 @@ export function marketGate(numbers, quote, limits = MARKET_LIMITS) {
 /** Implied win probabilities with the pool overround removed proportionally. */
 export function marketProbabilities(odds) {
   if (!Array.isArray(odds) || odds.length < 2
-      || odds.some((value) => !Number.isFinite(value) || value < 1.01 || value >= 900)) return null;
+      || Array.from(odds).some((value) => !Number.isFinite(value) || value < 1.01 || value >= 900)) return null;
   const inverse = odds.map((o) => 1 / o);
   const total = inverse.reduce((a, b) => a + b, 0);
   return inverse.map((x) => x / total);
@@ -86,8 +86,8 @@ const softmaxT = (scores, t) => {
 
 /** Single temperature fitted on the calibration window (grid search on log-loss). */
 export function fitTemperature(items) {
-  if (!Array.isArray(items) || !items.length || items.some((item) =>
-    !Array.isArray(item?.s) || item.s.length < 2 || item.s.some((score) => !Number.isFinite(score))
+  if (!Array.isArray(items) || !items.length || Array.from(items).some((item) =>
+    !Array.isArray(item?.s) || item.s.length < 2 || Array.from(item.s).some((score) => !Number.isFinite(score))
     || !Number.isSafeInteger(item.win) || item.win < 0 || item.win >= item.s.length)) return null;
   const usable = items;
   let best = { t: 1, loss: Infinity };
@@ -101,9 +101,9 @@ export function fitTemperature(items) {
 /** Log-loss, Brier (summed over runners, averaged per race) and runner-level ECE over 10 bins. */
 export function calibrationStats(input, bins = 10) {
   if (!Number.isSafeInteger(bins) || bins < 1 || bins > 100
-      || !Array.isArray(input) || !input.length || input.some((item) =>
+      || !Array.isArray(input) || !input.length || Array.from(input).some((item) =>
         !Array.isArray(item?.p) || item.p.length < 2
-        || item.p.some((p) => !Number.isFinite(p) || p < 0 || p > 1)
+        || Array.from(item.p).some((p) => !Number.isFinite(p) || p < 0 || p > 1)
         || Math.abs(item.p.reduce((sum, p) => sum + p, 0) - 1) > 1e-9
         || !Number.isSafeInteger(item.win) || item.win < 0 || item.win >= item.p.length)) return null;
   const items = input;

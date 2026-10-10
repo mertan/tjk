@@ -70,7 +70,7 @@ export function oddsAtCutoff(history, postMs, cutoffMs) {
       || !Array.isArray(history.datasets) || !history.datasets.length) {
     return invalid('INVALID_HISTORY_SHAPE');
   }
-  const labels = history.labels.map(istanbulMs);
+  const labels = Array.from(history.labels, istanbulMs);
   if (labels.some((at) => !validTimestamp(at))) return invalid('INVALID_HISTORY_TIMESTAMP');
   if (labels.some((at, index) => index > 0 && at <= labels[index - 1])) {
     return invalid('NON_MONOTONIC_HISTORY');

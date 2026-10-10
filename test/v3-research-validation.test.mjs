@@ -92,13 +92,13 @@ test('history timestamps validate calendar dates and cutoffs without rejecting l
 });
 
 test('calibration helpers return unavailable for empty or malformed evidence', () => {
-  for (const items of [null, [], [{}], [{ s: [], win: 0 }], [{ s: [0, 1], win: -1 }],
+  for (const items of [null, [], new Array(1), [{}], [{ s: new Array(2), win: 0 }], [{ s: [], win: 0 }], [{ s: [0, 1], win: -1 }],
     [{ s: [0, 1], win: 2 }], [{ s: [0, 1], win: 0.5 }], [{ s: [0, NaN], win: 0 }],
     [{ s: [0, Infinity], win: 0 }], [{ s: [0, '1'], win: 0 }]]) {
     assert.equal(fitTemperature(items), null);
   }
   assert.ok(Number.isFinite(fitTemperature([{ s: [1e308, -1e308], win: 0 }])));
-  for (const items of [null, [], [{}], [{ p: [0.2, 0.3], win: 0 }],
+  for (const items of [null, [], new Array(1), [{}], [{ p: Object.assign(new Array(2), { 0: 1 }), win: 0 }], [{ p: [0.2, 0.3], win: 0 }],
     [{ p: [0.5, 0.5], win: 2 }], [{ p: [0.5, 0.5], win: -1 }],
     [{ p: [0.5, 0.5], win: 0.5 }], [{ p: [-0.5, 1.5], win: 0 }],
     [{ p: [0.5, NaN], win: 0 }], [{ p: ['0.5', 0.5], win: 0 }]]) {
@@ -108,7 +108,7 @@ test('calibration helpers return unavailable for empty or malformed evidence', (
     assert.equal(calibrationStats([{ p: [0.5, 0.5], win: 0 }], bins), null);
   }
   assert.equal(calibrationStats([{ p: [0.5, 0.5], win: 0 }]).logLoss, 0.6931);
-  for (const odds of [[], [2], [0, 2], [2, NaN], [2, -1], [2, '3']]) {
+  for (const odds of [[], [2], Object.assign(new Array(2), { 0: 2 }), [0, 2], [2, NaN], [2, -1], [2, '3']]) {
     assert.equal(marketProbabilities(odds), null);
   }
 });
@@ -127,6 +127,7 @@ test('ROI bootstrap uses aggregate return divided by aggregate stake for each ra
   assert.ok(bootstrapRoiCI(withZeros)[1] < -0.3);
   assert.equal(bootstrapRoiCI(records.slice(0, 29)), null);
   assert.equal(bootstrapRoiCI([{ stake: 1, ret: NaN }]), null);
+  assert.equal(bootstrapRoiCI(new Array(30)), null);
 });
 
 test('missing winning dividends suppress official ROI and CI, while retaining labelled quote counterfactual', () => {
@@ -153,7 +154,8 @@ const fixtureRaces = () => ['2026-01-14', '2026-02-14', '2026-03-14'].map((date)
   }))
 }));
 
-async function evaluateFixture({ missingQuoteDate = null, omitDate = null, missingDividend = false } = {}) {
+async function evaluateFixture({ missingQuoteDate = null, omitDate = null, missingDividend = false,
+  testCutoffShiftMs = 0, testPostShiftMs = 0 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tjk-v3-evaluation-'));
   try {
     const races = fixtureRaces().filter((race) => race.date !== omitDate);
@@ -162,7 +164,8 @@ async function evaluateFixture({ missingQuoteDate = null, omitDate = null, missi
     for (const race of races) {
       const time = Date.parse(race.date + 'T13:55:00+03:00');
       quotes[race.date + '|ANKARA|1'] = race.date === missingQuoteDate ? null : {
-        cutoffMs: time, postMs: time + 5 * 60_000, lastLabelAt: time - 60_000,
+        cutoffMs: time + (race.date === '2026-03-14' ? testCutoffShiftMs : 0),
+        postMs: time + 5 * 60_000 + (race.date === '2026-03-14' ? testPostShiftMs : 0), lastLabelAt: time - 60_000,
         runners: Object.fromEntries([1, 2, 3, 4].map((number) => [number, { odds: number + 1, at: time - 60_000 }]))
       };
     }
@@ -212,4 +215,22 @@ test('evaluation reports missing favourite dividend instead of booking the win a
   assert.equal(report.overall.roi.marketFavouriteFlat.status, 'DIVIDEND_MISSING');
   assert.equal(report.overall.roi.marketFavouriteFlat.missingDividend, 1);
   assert.equal(report.overall.roi.marketFavouriteFlat.roiDividend, null);
+});
+
+test('evaluation binds every quote cutoff and post time to its official race and labels archive provenance unverified', async () => {
+  for (const [options, reason] of [
+    [{ testCutoffShiftMs: -5 * 60_000 }, 'CUTOFF_RACE_MISMATCH'],
+    [{ testCutoffShiftMs: 60_000 }, 'CUTOFF_RACE_MISMATCH'],
+    [{ testPostShiftMs: 60_000 }, 'POST_RACE_MISMATCH']
+  ]) {
+    const report = await evaluateFixture(options);
+    assert.equal(report.overall.v3.coverage.predicted, 0);
+    assert.equal(report.overall.fav.coverage.predicted, 0);
+    assert.equal(report.marketPASReasons[reason], 1);
+  }
+  const report = await evaluateFixture();
+  assert.equal(report.backtestVerified, false);
+  assert.equal(report.reportKind, 'UNVERIFIED_ARCHIVAL_RESEARCH');
+  assert.equal(report.method.inputProvenance, 'archival_unverified');
+  assert.ok(report.verification.reasonCodes.includes('PRE_CUTOFF_INPUT_SNAPSHOT_UNVERIFIED'));
 });

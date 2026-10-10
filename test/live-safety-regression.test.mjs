@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildRaceAnalysis, parseProgramCsv, startServer } from '../server.mjs';
 import { get } from 'node:http';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { liveRaceFromProgram } from '../model-v3/live-runtime.mjs';
+import { FEATURE_NAMES_V3, historyDigest } from '../model-v3/live-inference.mjs';
 import { isProgramWithdrawn, raceGate } from '../race-gates.mjs';
 import { parseOddsHistory, historyMetrics } from '../odds-history.mjs';
 import { createV3SnapshotStore, prepareV3Quote, v3Envelope } from '../model-v3/live-context.mjs';
@@ -67,11 +72,12 @@ test('invalid, duplicated, unordered, unbound and incomplete histories fail clos
 
 let sequence = 0;
 async function source(t, { conflict = false, anomaly = false, mismatch = false, missing = false,
-  stale = false, v3 = false } = {}) {
-  const key = 'SAFETY' + (++sequence);
+  stale = false, v3 = false, snapshotStore = createV3SnapshotStore(), keyOverride,
+  now = Date.parse('2026-10-10T13:55:01+03:00') } = {}) {
+  const key = keyOverride || 'SAFETY' + (++sequence);
   const date = '2026-10-10';
-  const now = Date.parse('2026-10-10T13:55:01+03:00');
-  t.mock.method(Date, 'now', () => now);
+  const clockStarted = performance.now();
+  t.mock.method(Date, 'now', () => now + Math.floor(performance.now() - clockStarted));
   t.mock.method(globalThis, 'fetch', async (input) => {
     const url = String(input);
     const json = (data) => new Response(JSON.stringify(data));
@@ -97,7 +103,7 @@ async function source(t, { conflict = false, anomaly = false, mismatch = false, 
         KOSMAZ: n === 7 && !conflict
       })) }] } } });
   });
-  return buildRaceAnalysis(date, key, 1, { v3, snapshots: createV3SnapshotStore() });
+  return buildRaceAnalysis(date, key, 1, { v3, snapshots: snapshotStore });
 }
 const noPicks = (result) => {
   assert.equal(result.analysis.status, 'PAS', result.analysis.reasonCodes.join(','));
@@ -208,4 +214,52 @@ test('V3 endpoint is disabled by default and configuration is explicit', async (
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('V3 source-to-API path uses the audited synthetic model after a real pre-cutoff snapshot', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tjk-v3-api-'));
+  const modelFile = join(dir, 'model.json');
+  const historyFile = join(dir, 'history.json');
+  const oldModel = process.env.V3_MODEL_PATH;
+  const oldHistory = process.env.V3_HISTORY_PATH;
+  t.after(async () => {
+    if (oldModel === undefined) delete process.env.V3_MODEL_PATH; else process.env.V3_MODEL_PATH = oldModel;
+    if (oldHistory === undefined) delete process.env.V3_HISTORY_PATH; else process.env.V3_HISTORY_PATH = oldHistory;
+    await rm(dir, { recursive: true, force: true });
+  });
+  const parsed = parseProgramCsv(program())[0];
+  const target = liveRaceFromProgram({ programRace: parsed, date: '2026-10-10', venueKey: 'SAFETYPIPE' });
+  const history = ['2026-09-01', '2026-09-02'].map((date) => ({
+    ...target, date, runners: target.runners.map((r) => ({
+      ...r, position: r.scratched ? null : r.number, finishTime: r.scratched ? null : 80 + r.number
+    }))
+  }));
+  // All model values and counts below are synthetic test inputs, never deployment artefacts.
+  const artifact = {
+    schemaVersion: 'tjk-v3-live/1', featureNames: [...FEATURE_NAMES_V3],
+    weights: FEATURE_NAMES_V3.map((_, i) => (i - 16) / 100),
+    formOrder: { newestLast: true },
+    training: { from: '2026-09-01', through: '2026-09-01', races: 1 },
+    calibration: { from: '2026-09-02', through: '2026-09-02', races: 30,
+      temperature: 1.2, scoreTransform: 'multiply' },
+    historySha256: historyDigest(history), quoteCutoffMinutes: 5
+  };
+  await writeFile(modelFile, JSON.stringify(artifact));
+  await writeFile(historyFile, JSON.stringify({ races: history }));
+  process.env.V3_MODEL_PATH = modelFile;
+  process.env.V3_HISTORY_PATH = historyFile;
+  const snapshotStore = createV3SnapshotStore();
+  const cutoff = Date.parse('2026-10-10T13:55:00+03:00');
+  const before = await source(t, { v3: true, snapshotStore, keyOverride: 'SAFETYPIPE', now: cutoff - 1000 });
+  noPicks(before);
+  assert.ok(before.analysis.reasonCodes.includes('V3_CUTOFF_NOT_REACHED'));
+  t.mock.restoreAll();
+  const after = await source(t, { v3: true, snapshotStore, keyOverride: 'SAFETYPIPE', now: cutoff + 1000 });
+  assert.equal(after.analysis.status, 'OK', after.analysis.reasonCodes.join(','));
+  assert.equal(after.analysis.modelVersion, 'tjk-v3');
+  assert.equal(after.analysis.confidence, null);
+  assert.equal(after.runners.length, 4);
+  assert.equal(after.runners.some((r) => r.number === 7), false);
+  assert.ok(Math.abs(after.runners.reduce((sum, r) => sum + r.modelProbability, 0) - 100) < 1e-8);
+  assert.equal(after.analysis.picks.value, null);
 });

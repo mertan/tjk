@@ -17,7 +17,9 @@ async function run(t, { raceNo, lastPointAgoMs = 60_000, heartbeatAgoMs = 5_000,
   const key = `FRESH${++sequence}`;
   const day = String(sequence - 30).padStart(2, '0');
   const date = `2026-11-${day}`;
-  t.mock.method(Date, 'now', () => Date.parse(`${date}T18:45:00+03:00`));
+  const clockStarted = performance.now();
+  const clockBase = Date.parse(`${date}T18:45:00+03:00`);
+  t.mock.method(Date, 'now', () => clockBase + Math.floor(performance.now() - clockStarted));
   const program = programs.find((r) => r.number === raceNo);
   const rows = program.runners.map((r) => ({ S1: String(r.number), G: currentOdds, KOSMAZ: /Koşmaz/.test(r.rawName) }));
   const info = { SAAT: program.time, PIST: program.surface, DURUM: 'AÇIK', timestamp: Date.now(), bahisler: [{ B: 'GANYAN', muhtemeller: rows }] };
