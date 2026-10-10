@@ -68,7 +68,7 @@ test('invalid fields fail closed for all runners instead of dropping the incompl
     ['currentOdds', null, 'INVALID_CURRENT_ODDS'], ['currentOdds', NaN, 'INVALID_CURRENT_ODDS'],
     ['currentOdds', Infinity, 'INVALID_CURRENT_ODDS'], ['currentOdds', 0, 'INVALID_CURRENT_ODDS'],
     ['currentOdds', -1, 'INVALID_CURRENT_ODDS'], ['currentOdds', 900, 'INVALID_CURRENT_ODDS'],
-    ['currentOdds', '2', 'INVALID_CURRENT_ODDS'], ['rating', null, 'INVALID_RATING'],
+    ['currentOdds', '2', 'INVALID_CURRENT_ODDS'], ['rating', null, 'RATING_MISSING'], ['rating', undefined, 'RATING_MISSING'],
     ['rating', NaN, 'INVALID_RATING'], ['rating', Infinity, 'INVALID_RATING'], ['rating', -1, 'INVALID_RATING'],
     ['number', 1.5, 'INVALID_RUNNER_NUMBER'], ['number', 0, 'INVALID_RUNNER_NUMBER'],
     ['number', '1', 'INVALID_RUNNER_NUMBER'], ['name', ' ', 'MISSING_RUNNER_NAME'],

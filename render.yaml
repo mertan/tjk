@@ -6,5 +6,8 @@ services:
     region: frankfurt
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /api/status
+    healthCheckPath: /healthz
+    envVars:
+      - key: TRUST_PROXY
+        value: "1"
     autoDeployTrigger: commit

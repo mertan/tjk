@@ -4,7 +4,8 @@ import { extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyzeRunners } from './analysis.mjs';
 export { analyzeRunners } from './analysis.mjs';
-import { isWithdrawn, raceDataIssues } from './race-gates.mjs';
+import { classifyRating, isWithdrawn, parseSourceTime, raceGate } from './race-gates.mjs';
+import { createCache, createLimiter, createRateLimiter } from './tjk-cache.mjs';
 
 const ROOT_DIR = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(ROOT_DIR, 'public');
@@ -15,7 +16,13 @@ const LIVE_BASE = 'https://vhs-medya.tjk.org/muhtemeller/s';
 const HISTORY_BASE = 'https://vhs.tjk.org/muhtemeller/data/history';
 const REPORT_BASE = 'https://medya-cdn.tjk.org/raporftp/TJKPDF';
 
-const cache = new Map();
+// Bounded, coalescing cache plus a global outbound limiter keep TJK load
+// independent of how many clients poll the panel.
+const cache = createCache({ maxEntries: Number(process.env.CACHE_MAX_ENTRIES || 500) });
+const upstream = createLimiter({
+  concurrency: Number(process.env.UPSTREAM_CONCURRENCY || 6),
+  minIntervalMs: Number(process.env.UPSTREAM_MIN_INTERVAL_MS || 25)
+});
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -77,15 +84,10 @@ class HttpError extends Error {
 }
 
 async function cached(key, ttlMs, producer) {
-  const current = cache.get(key);
-  const now = Date.now();
-  if (current && current.expiresAt > now) return current.value;
-  const value = await producer();
-  cache.set(key, { value, expiresAt: now + ttlMs });
-  return value;
+  return cache.get(key, ttlMs, producer);
 }
 
-async function fetchText(url, { timeout = 12_000, optional = false } = {}) {
+async function fetchTextDirect(url, { timeout = 12_000, optional = false } = {}) {
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(timeout),
@@ -106,6 +108,10 @@ async function fetchText(url, { timeout = 12_000, optional = false } = {}) {
     if (error instanceof HttpError) throw error;
     throw new HttpError(502, 'TJK veri kaynağına ulaşılamadı.', error.message);
   }
+}
+
+function fetchText(url, options) {
+  return upstream.schedule(() => fetchTextDirect(url, options));
 }
 
 async function fetchJson(url, options) {
@@ -370,11 +376,15 @@ async function getProgramForVenue(date, venue) {
   const url = buildProgramCsvUrl(normalized, venue);
   if (!url) return [];
   const csv = await cached(`csv:${normalized}:${venue.KEY}`, 30_000, () => fetchText(url, { optional: true }));
+  return programForVenueCsv(csv, normalized, venue);
+}
+
+export function programForVenueCsv(csv, date, venue) {
   if (!csv) return [];
   const envelope = programCsvRecords(csv)[0];
-  const { year, month, day } = formatDateParts(normalized);
+  const { year, month, day } = formatDateParts(normalizeDate(date));
   const placeKey = (value) => String(value || '').normalize('NFC').replace(/\s+/gu, '');
-  if (!envelope || envelope[2] !== `${day}/${month}/${year}` || placeKey(envelope[0]) !== placeKey(venue.YER)) return [];
+  if (!envelope || envelope[2] !== `${day}/${month}/${year}` || placeKey(envelope[0]) !== placeKey(venue?.YER)) return [];
   return parseProgramCsv(csv);
 }
 
@@ -398,6 +408,7 @@ async function getHistory(date, venueKey, raceNumber, horseNumber) {
   return payload.data.labels.map((label, index) => ({
     label,
     time: String(label).slice(11, 16),
+    at: parseSourceTime(String(label)),
     odds: parseDecimal(values[index])
   })).filter((point) => point.odds && point.odds > 0 && point.odds < 900);
 }
@@ -480,7 +491,7 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
       agf: agfSeries,
       agfLatest: agfSeries.at(-1)?.percentage ?? null,
       agfRank: agfSeries.at(-1)?.rank ?? null,
-      rating: program.rating ?? null,
+      ...classifyRating(program.rating, { foreign: Boolean(feed.venue.YURTDISI) }),
       jockey: program.jockey ?? null,
       trainer: program.trainer ?? null,
       owner: program.owner ?? null,
@@ -493,13 +504,17 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
     };
   }).filter((runner) => !runner.out);
 
-  const analysis = analyzeRunners(runners, { reasonCodes: raceDataIssues(feed, programRace) });
+  // Each active runner's newest timestamped odds point is its quote time.
+  const quoteTimes = runners.map((runner) => Math.max(...runner.history.map((point) => point.at).filter(Number.isFinite)));
+  const gate = raceGate(feed, programRace, { quoteTimes });
+  const analysis = analyzeRunners(runners, { reasonCodes: gate.reasons });
   const marketMap = Object.fromEntries(bets.map((bet) => [bet.B, formatMarketItems(bet, horseNames, nextRaceHorseNames)]));
   const raceInfo = feed.racePayload.data.muhtemeller;
   return {
     date: normalizeDate(date),
     updatedAt: new Date().toISOString(),
-    sourceTime: feed.checksum.datetime || raceInfo.timestamp || null,
+    sourceTime: feed.checksum.datetime || null,
+    freshness: gate.freshness,
     venue: {
       key: feed.key,
       name: feed.venue.HIPODROM || feed.venue.YER || feed.key,
@@ -532,7 +547,8 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
         steam: pickSummary(analysis.steam),
         value: pickSummary(analysis.value),
         surprise: pickSummary(analysis.surprise)
-      }
+      },
+      agfComparison: agfComparison(analysis)
     },
     // Legacy Python consumers score `runners` themselves and ignore status.
     // A PAS response must never expose a candidate set to those consumers.
@@ -544,7 +560,7 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
       siraliIkili: marketMap['SIRALI İKİLİ'] || [],
       cifte: marketMap['ÇİFTE'] || []
     },
-    methodology: 'AGF puana, sıralamaya ve sinyal gücüne katılmaz. Ganyan, handikap ve gerçek oran geçmişi 55:10:7 oranında normalize edilir; zorunlu veri eksikse PAS. Model puanı ve sinyal gücü kalibre edilmiş kazanma olasılığı değildir.',
+    methodology: 'AGF puana, sıralamaya ve sinyal gücüne katılmaz; yalnızca agfComparison altında karşılaştırma için raporlanır. Ganyan, handikap ve gerçek oran geçmişi 55:10:7 oranında normalize edilir. Tazelik TJK zaman damgalarıyla doğrulanır (her koşan atın son oran noktası ve TJK nabzı); doğrulanamazsa, handikap eksikse veya zorunlu veri eksikse PAS. Model puanı ve sinyal gücü kalibre edilmiş kazanma olasılığı değildir.',
     warning: 'Puanlar sezgisel karşılaştırmadır; kesin sonuç veya kazanç garantisi değildir. Oran düşüşü para yönünü gösterir ancak yatırılan kesin TL tutarı TJK akışında bulunmaz.'
   };
 }
@@ -573,6 +589,20 @@ export async function buildRaceAnalysis(date, venueKey, raceNumber) {
       warning: 'PAS: kaynak verisi alınamadı; önceki tahmin güncel sonuç olarak kullanılmaz.'
     };
   }
+}
+
+function agfComparison(analysis) {
+  if (analysis.status !== 'OK') return null;
+  const withAgf = analysis.runners.filter((runner) => Number.isFinite(runner.agfLatest));
+  if (withAgf.length !== analysis.runners.length) return { usedInScore: false, available: false };
+  const byAgf = [...withAgf].sort((a, b) => b.agfLatest - a.agfLatest || a.number - b.number);
+  return {
+    usedInScore: false,
+    available: true,
+    agfLeader: { number: byAgf[0].number, name: byAgf[0].name, agf: byAgf[0].agfLatest },
+    modelLeaderAgfRank: byAgf.findIndex((runner) => runner.number === analysis.leader.number) + 1,
+    agreesWithModelLeader: byAgf[0].number === analysis.leader.number
+  };
 }
 
 function pickSummary(runner) {
@@ -623,9 +653,28 @@ async function serveStatic(pathname, res) {
   res.end(data);
 }
 
-async function handleRequest(req, res) {
+function clientAddress(req, trustProxy) {
+  if (trustProxy) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (forwarded) return forwarded;
+  }
+  return req.socket.remoteAddress || 'unknown';
+}
+
+async function handleRequest(req, res, context) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  // Liveness only: never touches TJK, so an upstream outage cannot restart the service.
+  if (url.pathname === '/healthz' && (req.method === 'GET' || req.method === 'HEAD')) {
+    return json(res, 200, { ok: true, uptimeSec: Math.round(process.uptime()), time: new Date().toISOString(), cache: cache.stats() });
+  }
   if (req.method !== 'GET') throw new HttpError(405, 'Yalnızca GET destekleniyor.');
+  if (url.pathname.startsWith('/api/')) {
+    const verdict = context.rateLimit(clientAddress(req, context.trustProxy));
+    if (!verdict.allowed) {
+      res.setHeader('retry-after', String(verdict.retryAfterSec));
+      throw new HttpError(429, 'Çok fazla istek. Lütfen biraz sonra tekrar deneyin.');
+    }
+  }
 
   if (url.pathname === '/api/status') {
     return json(res, 200, { ok: true, today: await getToday(), time: new Date().toISOString() });
@@ -649,9 +698,16 @@ async function handleRequest(req, res) {
   return serveStatic(url.pathname, res);
 }
 
-export function startServer({ port = PORT, host = '0.0.0.0' } = {}) {
+export function startServer({
+  port = PORT,
+  host = '0.0.0.0',
+  rateLimitPerMin = Number(process.env.RATE_LIMIT_PER_MIN || 120),
+  trustProxy = process.env.TRUST_PROXY === '1',
+  quiet = false
+} = {}) {
+  const context = { rateLimit: createRateLimiter({ windowMs: 60_000, max: rateLimitPerMin }), trustProxy };
   const server = createServer((req, res) => {
-    handleRequest(req, res).catch((error) => {
+    handleRequest(req, res, context).catch((error) => {
       const status = error instanceof HttpError ? error.status : 500;
       json(res, status, {
         error: error.message || 'Beklenmeyen sunucu hatası.',
@@ -660,7 +716,7 @@ export function startServer({ port = PORT, host = '0.0.0.0' } = {}) {
     });
   });
   server.listen(port, host, () => {
-    console.log(`TJK Canlı Radar http://localhost:${port} adresinde çalışıyor.`);
+    if (!quiet) console.log(`TJK Canlı Radar http://localhost:${port} adresinde çalışıyor.`);
   });
   return server;
 }

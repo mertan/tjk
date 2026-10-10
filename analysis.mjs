@@ -79,7 +79,10 @@ export function analyzeRunners(runners, { reasonCodes = [] } = {}) {
     numbers.add(runner.number);
     if (typeof runner.name !== 'string' || !runner.name.trim()) reasons.push('MISSING_RUNNER_NAME');
     if (!validOdds(runner.currentOdds)) reasons.push('INVALID_CURRENT_ODDS');
-    if (!Number.isFinite(runner.rating) || runner.rating < 0) reasons.push('INVALID_RATING');
+    // Missing/unrated handicap is never imputed (no zero fill, no uniform vector).
+    if (runner.ratingStatus === 'unrated') reasons.push('RATING_UNRATED');
+    else if (runner.rating === null || runner.rating === undefined) reasons.push('RATING_MISSING');
+    else if (!Number.isFinite(runner.rating) || runner.rating < 0) reasons.push('INVALID_RATING');
 
     const history = Array.isArray(runner.history)
       ? runner.history.filter((point) => validOdds(point?.odds))
