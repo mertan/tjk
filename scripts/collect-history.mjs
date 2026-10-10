@@ -68,7 +68,7 @@ for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`)
       const { runners, matched } = joinResults(race, result, year);
       if (matched !== result.rows.length) stats.partialJoin += 1;
       const { rows, ...meta } = race;
-      races.push({ date, venue: venue.KEY, ...meta, runners });
+      races.push({ date, venue: venue.KEY, yer: venue.YER, ...meta, runners });
       stats.races += 1;
     }
   }));
