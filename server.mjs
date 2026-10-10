@@ -4,8 +4,11 @@ import { extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyzeRunners } from './analysis.mjs';
 export { analyzeRunners } from './analysis.mjs';
-import { classifyRating, isWithdrawn, parseSourceTime, raceGate } from './race-gates.mjs';
+import { classifyRating, isWithdrawn, isProgramWithdrawn, parseSourceTime, raceGate } from './race-gates.mjs';
 import { createCache, createLimiter, createRateLimiter } from './tjk-cache.mjs';
+import { parseOddsHistory, historyMetrics } from './odds-history.mjs';
+import { analyzeLiveV3 } from './model-v3/live-runtime.mjs';
+import { createV3SnapshotStore, prepareV3Quote, v3Envelope } from './model-v3/live-context.mjs';
 
 const ROOT_DIR = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(ROOT_DIR, 'public');
@@ -21,6 +24,8 @@ const REPORT_BASE = 'https://medya-cdn.tjk.org/raporftp/TJKPDF';
 const cache = createCache({ maxEntries: Number(process.env.CACHE_MAX_ENTRIES || 500) });
 const upstream = createLimiter({
   concurrency: Number(process.env.UPSTREAM_CONCURRENCY || 6),
+  // Rate pacing must survive system-clock adjustments and source-time test clocks.
+  now: () => performance.now(),
   minIntervalMs: Number(process.env.UPSTREAM_MIN_INTERVAL_MS || 25)
 });
 
@@ -263,6 +268,7 @@ export function parseProgramCsv(csvText) {
   let headers = null;
   let headerSeen = false;
   let runnerNumbers = new Set();
+  let prizeNext = false;
 
   function invalidateCurrent() {
     invalidRaceNumbers.add(current.number);
@@ -279,6 +285,7 @@ export function parseProgramCsv(csvText) {
       headers = null;
       headerSeen = false;
       runnerNumbers = new Set();
+      prizeNext = false;
       const number = Number(boundary[1]);
       if (seenRaceNumbers.has(number)) {
         // Neither copy of an ambiguous race may supply prediction inputs.
@@ -300,6 +307,7 @@ export function parseProgramCsv(csvText) {
         weightRule: distanceIndex > 3 ? columns.slice(3, distanceIndex).filter(Boolean).join(' · ') : columns[3] || null,
         distance: distanceIndex >= 0 ? columns[distanceIndex] : null,
         surface: surfaceIndex >= 0 ? columns[surfaceIndex] : null,
+        prize1: null,
         runners: []
       };
       races.push(current);
@@ -307,6 +315,13 @@ export function parseProgramCsv(csvText) {
       continue;
     }
     if (!current) continue;
+    if (columns[0] === 'İkramiye' && !headerSeen) { prizeNext = true; continue; }
+    if (prizeNext) {
+      prizeNext = false;
+      const prize = String(columns[0] || '').match(/^1\.\)\s*([\d.]+)/u);
+      if (prize) current.prize1 = Number(prize[1].replaceAll('.', ''));
+      continue;
+    }
     if (columns.includes('At No')) {
       const labelled = columns.filter(Boolean);
       if (headerSeen || columns[0] !== 'At No' || !columns.includes('At İsmi') || new Set(labelled).size !== labelled.length) {
@@ -339,6 +354,8 @@ export function parseProgramCsv(csvText) {
     current.runners.push({
       number: Number(row['At No']),
       rawName: row['At İsmi'] || '',
+      scratched: isProgramWithdrawn({ rawName: row['At İsmi'] }),
+      programRow: row,
       age: row['Yaş'] || null,
       sire: row['Orijin(Baba)'] || null,
       dam: row['Orijin(Anne)'] || null,
@@ -403,32 +420,7 @@ async function getHistory(date, venueKey, raceNumber, horseNumber) {
   const payload = await cached(`history:${normalized}:${key}:${no}:${horse}`, 8_000, () =>
     fetchJson(`${HISTORY_BASE}?${query.toString()}`, { optional: true })
   );
-  if (!payload?.success || !Array.isArray(payload?.data?.labels)) return [];
-  const values = payload.data.datasets?.[0]?.data || [];
-  return payload.data.labels.map((label, index) => ({
-    label,
-    time: String(label).slice(11, 16),
-    at: parseSourceTime(String(label)),
-    odds: parseDecimal(values[index])
-  })).filter((point) => point.odds && point.odds > 0 && point.odds < 900);
-}
-
-function historyMetrics(points, currentOdds) {
-  const valid = points.filter((point) => Number.isFinite(point.odds));
-  const opening = valid[0]?.odds ?? null;
-  const recorded = valid.at(-1)?.odds ?? currentOdds;
-  const previous = valid.length > 1 ? valid.at(-2).odds : recorded;
-  const values = [...valid.map((point) => point.odds), currentOdds].filter(Number.isFinite);
-  return {
-    openingOdds: opening,
-    recordedOdds: round(recorded),
-    currentOdds: round(currentOdds),
-    lowOdds: round(Math.min(...values)),
-    highOdds: round(Math.max(...values)),
-    movementPercent: opening ? round(((currentOdds - opening) / opening) * 100, 1) : null,
-    shortMovementPercent: previous ? round(((currentOdds - previous) / previous) * 100, 1) : 0,
-    points: valid
-  };
+  return parseOddsHistory(payload, { date: normalized, expectedRunner: Number(horse) });
 }
 
 function formatMarketItems(bet, horseNames, nextRaceHorseNames) {
@@ -446,7 +438,7 @@ function formatMarketItems(bet, horseNames, nextRaceHorseNames) {
   }).filter((item) => item.odds);
 }
 
-async function collectRaceAnalysis(date, venueKey, raceNumber) {
+async function collectRaceAnalysis(date, venueKey, raceNumber, { v3 = false, snapshots } = {}) {
   const feed = await getRaceFeed(date, venueKey, raceNumber);
   const programRaces = await getProgramForVenue(date, feed.venue);
   const programRace = programRaces.find((race) => String(race.number) === feed.no) || null;
@@ -466,7 +458,7 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
   const historyResults = await Promise.all((ganyan.muhtemeller || []).map(async (item) => {
     const number = String(item.S1);
     const currentOdds = parseDecimal(item.G);
-    if (!currentOdds || isWithdrawn(item.KOSMAZ)) return null;
+    if (!currentOdds || isWithdrawn(item.KOSMAZ) || isProgramWithdrawn(programByNumber.get(number))) return null;
     const history = await getHistory(date, feed.key, feed.no, number);
     return { number, currentOdds, history, ...historyMetrics(history, currentOdds) };
   }));
@@ -474,19 +466,28 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
 
   const runners = (ganyan.muhtemeller || []).map((item) => {
     const number = String(item.S1);
-    const currentOdds = parseDecimal(item.G);
+    const reportedCurrentOdds = parseDecimal(item.G);
     const program = programByNumber.get(number) || {};
-    const historyData = historyByNumber.get(number) || historyMetrics([], currentOdds);
+    const historyData = historyByNumber.get(number) || historyMetrics([], reportedCurrentOdds);
+    // Score the timestamped history record itself. G is a separate consistency
+    // check, never an untimed substitute for a missing quote record.
+    const timestampedQuote = historyData.points.filter((point) => Number.isFinite(point.at))
+      .reduce((latest, point) => !latest || point.at > latest.at ? point : latest, null);
+    const currentOdds = timestampedQuote?.odds ?? null;
     const agfSeries = program.agf || [];
     return {
       number: Number(number),
       name: horseNames[number] || program.rawName || '',
       currentOdds,
+      reportedCurrentOdds,
       openingOdds: historyData.openingOdds,
       lowOdds: historyData.lowOdds,
       highOdds: historyData.highOdds,
       movementPercent: historyData.movementPercent,
       shortMovementPercent: historyData.shortMovementPercent,
+      historyStatus: historyData.historyStatus,
+      historyReasonCodes: historyData.historyReasonCodes,
+      openingKind: historyData.openingKind,
       history: historyData.points,
       agf: agfSeries,
       agfLatest: agfSeries.at(-1)?.percentage ?? null,
@@ -500,20 +501,39 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
       age: program.age ?? null,
       lastSix: program.lastSix ?? null,
       bestTime: program.bestTime ?? null,
-      out: isWithdrawn(item.KOSMAZ)
+      out: isWithdrawn(item.KOSMAZ) || isProgramWithdrawn(program)
     };
   }).filter((runner) => !runner.out);
 
   // Each active runner's newest timestamped odds point is its quote time.
   const quoteTimes = runners.map((runner) => Math.max(...runner.history.map((point) => point.at).filter(Number.isFinite)));
   const gate = raceGate(feed, programRace, { quoteTimes });
+  // A history clock cannot certify an unrelated current GANYAN price.
+  const bindingReasons = runners.flatMap((runner) => runner.historyReasonCodes || []);
+  for (const runner of runners) {
+    const ordered = runner.history.filter((point) => Number.isFinite(point.at)).sort((a, b) => a.at - b.at);
+    const latest = ordered.at(-1);
+    if (!latest || latest.odds !== runner.currentOdds || runner.reportedCurrentOdds !== runner.currentOdds
+        || ordered.some((point) => point.at === latest.at && point.odds !== latest.odds)) {
+      bindingReasons.push('QUOTE_VALUE_MISMATCH');
+    }
+    if (runner.history.some((point, index, all) => !Number.isFinite(point.at)
+        || (index > 0 && point.at < all[index - 1].at))) bindingReasons.push('QUOTE_HISTORY_INVALID');
+    runner.quoteAt = latest ? new Date(latest.at).toISOString() : null;
+  }
+  if (bindingReasons.length) {
+    gate.reasons = [...new Set([...gate.reasons, 'SOURCE_FRESHNESS_UNVERIFIED', ...bindingReasons])];
+    gate.freshness.status = 'UNVERIFIED';
+    gate.freshness.reasons = [...new Set([...gate.freshness.reasons, 'SOURCE_FRESHNESS_UNVERIFIED', ...bindingReasons])];
+  }
+  gate.freshness.valueBound = bindingReasons.length === 0 && runners.length > 0;
   const analysis = analyzeRunners(runners, { reasonCodes: gate.reasons });
   const marketMap = Object.fromEntries(bets.map((bet) => [bet.B, formatMarketItems(bet, horseNames, nextRaceHorseNames)]));
   const raceInfo = feed.racePayload.data.muhtemeller;
-  return {
+  const response = {
     date: normalizeDate(date),
     updatedAt: new Date().toISOString(),
-    sourceTime: feed.checksum.datetime || null,
+    sourceTime: gate.freshness.oldestQuoteAt,
     freshness: gate.freshness,
     venue: {
       key: feed.key,
@@ -563,18 +583,29 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
     methodology: 'AGF puana, sıralamaya ve sinyal gücüne katılmaz; yalnızca agfComparison altında karşılaştırma için raporlanır. Ganyan, handikap ve gerçek oran geçmişi 55:10:7 oranında normalize edilir. Tazelik TJK zaman damgalarıyla doğrulanır (her koşan atın son oran noktası ve TJK nabzı); doğrulanamazsa, handikap eksikse veya zorunlu veri eksikse PAS. Model puanı ve sinyal gücü kalibre edilmiş kazanma olasılığı değildir.',
     warning: 'Puanlar sezgisel karşılaştırmadır; kesin sonuç veya kazanç garantisi değildir. Oran düşüşü para yönünü gösterir ancak yatırılan kesin TL tutarı TJK akışında bulunmaz.'
   };
+  if (!v3) return response;
+  const prepared = prepareV3Quote({ date, venueKey, programRace, venueRaces: feed.venue.kosular, runners, snapshots, trusted: gate.reasons.length === 0 });
+  const result = await analyzeLiveV3({
+    programRace, date, venueKey, quote: prepared.quote,
+    reasonCodes: [...analysis.reasonCodes, ...prepared.reasonCodes, ...(feed.venue.YURTDISI ? ['V3_FOREIGN_UNSUPPORTED'] : [])]
+  });
+  const finalGate = raceGate(feed, programRace, { quoteTimes });
+  if (result.status === 'OK' && finalGate.reasons.length) {
+    return v3Envelope(response, { status: 'PAS', reasonCodes: finalGate.reasons, runners: [] });
+  }
+  return v3Envelope(response, result);
 }
 
-export async function buildRaceAnalysis(date, venueKey, raceNumber) {
+export async function buildRaceAnalysis(date, venueKey, raceNumber, options = {}) {
   const normalized = normalizeDate(date);
   const key = safeKey(venueKey);
   const no = safeRaceNumber(raceNumber);
   try {
-    return await collectRaceAnalysis(normalized, key, no);
+    return await collectRaceAnalysis(normalized, key, no, options);
   } catch (error) {
     if (!(error instanceof HttpError) || ![404, 502].includes(error.status)) throw error;
     const analysis = analyzeRunners([], { reasonCodes: ['SOURCE_UNAVAILABLE'] });
-    return {
+    const response = {
       date: normalized, updatedAt: new Date().toISOString(), sourceTime: null,
       venue: { key, name: key, place: null },
       race: { number: Number(no), time: null, status: 'VERİ YOK' },
@@ -588,6 +619,7 @@ export async function buildRaceAnalysis(date, venueKey, raceNumber) {
       methodology: 'AGF puana katılmaz. Zorunlu kaynak verisi olmadan aday üretilmez.',
       warning: 'PAS: kaynak verisi alınamadı; önceki tahmin güncel sonuç olarak kullanılmaz.'
     };
+    return options.v3 ? v3Envelope(response, { status: 'PAS', reasonCodes: ['SOURCE_UNAVAILABLE'], runners: [] }) : response;
   }
 }
 
@@ -653,11 +685,9 @@ async function serveStatic(pathname, res) {
   res.end(data);
 }
 
-function clientAddress(req, trustProxy) {
-  if (trustProxy) {
-    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-    if (forwarded) return forwarded;
-  }
+function clientAddress(req) {
+  // No deployment-specific trusted proxy chain is established. Forwarded
+  // headers are untrusted input; use the actual peer (shared behind a proxy).
   return req.socket.remoteAddress || 'unknown';
 }
 
@@ -669,13 +699,21 @@ async function handleRequest(req, res, context) {
   }
   if (req.method !== 'GET') throw new HttpError(405, 'Yalnızca GET destekleniyor.');
   if (url.pathname.startsWith('/api/')) {
-    const verdict = context.rateLimit(clientAddress(req, context.trustProxy));
+    const verdict = context.rateLimit(clientAddress(req));
     if (!verdict.allowed) {
       res.setHeader('retry-after', String(verdict.retryAfterSec));
       throw new HttpError(429, 'Çok fazla istek. Lütfen biraz sonra tekrar deneyin.');
     }
   }
 
+  if (url.pathname === '/api/config') {
+    return json(res, 200, { v3Enabled: context.v3Enabled });
+  }
+  if (url.pathname === '/api/v3/race') {
+    if (!context.v3Enabled) throw new HttpError(404, 'V3 test paneli etkin değil.');
+    const date = normalizeDate(url.searchParams.get('date') || await getToday());
+    return json(res, 200, await buildRaceAnalysis(date, url.searchParams.get('venue'), url.searchParams.get('race'), { v3: true, snapshots: context.snapshots }));
+  }
   if (url.pathname === '/api/status') {
     return json(res, 200, { ok: true, today: await getToday(), time: new Date().toISOString() });
   }
@@ -702,10 +740,12 @@ export function startServer({
   port = PORT,
   host = '0.0.0.0',
   rateLimitPerMin = Number(process.env.RATE_LIMIT_PER_MIN || 120),
-  trustProxy = process.env.TRUST_PROXY === '1',
-  quiet = false
+  quiet = false,
+  enableV3 = process.env.TJK_V3_ENABLED === '1'
 } = {}) {
-  const context = { rateLimit: createRateLimiter({ windowMs: 60_000, max: rateLimitPerMin }), trustProxy };
+  if (enableV3 && Number(port) !== 4200) throw new Error('V3 yalnızca 4200 test portunda etkinleştirilebilir.');
+  const context = { rateLimit: createRateLimiter({ windowMs: 60_000, max: rateLimitPerMin }),
+    v3Enabled: enableV3, snapshots: createV3SnapshotStore() };
   const server = createServer((req, res) => {
     handleRequest(req, res, context).catch((error) => {
       const status = error instanceof HttpError ? error.status : 500;

@@ -13,12 +13,15 @@ const programs = parseProgramCsv(csv);
 const istanbul = (ms) => new Date(ms + 3 * 3_600_000).toISOString().slice(0, 19).replace('T', ' ');
 let sequence = 40;
 
-async function run(t, { raceNo, lastPointAgoMs = 60_000, heartbeatAgoMs = 5_000 }) {
+async function run(t, { raceNo, lastPointAgoMs = 60_000, heartbeatAgoMs = 5_000, currentOdds = '3.20' }) {
   const key = `FRESH${++sequence}`;
   const day = String(sequence - 30).padStart(2, '0');
   const date = `2026-11-${day}`;
+  const clockStarted = performance.now();
+  const clockBase = Date.parse(`${date}T18:45:00+03:00`);
+  t.mock.method(Date, 'now', () => clockBase + Math.floor(performance.now() - clockStarted));
   const program = programs.find((r) => r.number === raceNo);
-  const rows = program.runners.map((r) => ({ S1: String(r.number), G: '3.20', KOSMAZ: /Koşmaz/.test(r.rawName) }));
+  const rows = program.runners.map((r) => ({ S1: String(r.number), G: currentOdds, KOSMAZ: /Koşmaz/.test(r.rawName) }));
   const info = { SAAT: program.time, PIST: program.surface, DURUM: 'AÇIK', timestamp: Date.now(), bahisler: [{ B: 'GANYAN', muhtemeller: rows }] };
   const race = { NO: raceNo, SAAT: program.time, PIST: program.surface, DURUM: 'AÇIK' };
   const end = Date.now() - lastPointAgoMs;
@@ -181,7 +184,7 @@ test('backtest uses only points at or before the cutoff and wraps midnight post 
       { number: 1, name: 'AT1', history: history([2, 2], afterOdds[0]), program: programRace.runners[0] },
       { number: 2, name: 'AT2', history: history([4, 4], afterOdds[1]), program: programRace.runners[1] },
       { number: 3, name: 'AT3', history: history([9, 9], afterOdds[2]), program: programRace.runners[2] }
-    ], cutoffMs: cutoff
+    ], cutoffMs: cutoff, inputSnapshotAt: '2026-10-09T11:00:00Z'
   });
   const a = base([2, 4, 9]);
   const b = base([30, 30, 1.2]);
@@ -196,7 +199,7 @@ test('backtest uses only points at or before the cutoff and wraps midnight post 
 test('results CSV winners parse and rates are withheld below the minimum sample', () => {
   const winners = resultsCsvWinners('X;;08/10/2026\n1. Kosu 20.10;M\n1;A\nGANYAN(2) :3,30 TL, SIRALI İKİLİ(2/4) :21,75 TL\n2. Kosu : X 20.43;M\n1. 6\'LI GANYAN(1/2/3) :1 TL, GANYAN(1) :2,20 TL\n');
   assert.deepEqual([...winners], [[1, [2]], [2, [1]]]);
-  const records = Array.from({ length: 5 }, (_, i) => ({ prediction: { status: 'OK', reasonCodes: [], leader: 1, marketFavourite: 1, agfLeader: 2 }, winners: [i % 2 ? 1 : 2] }));
+  const records = Array.from({ length: 5 }, (_, i) => ({ prediction: { status: 'OK', reasonCodes: [], leader: 1, marketFavourite: 1, agfLeader: 2 }, resultCheck: 'CONFIRMED', winners: [i % 2 ? 1 : 2] }));
   const small = summarize(records, { minSample: 30 });
   assert.equal(small.validPredictions, 5);
   assert.equal(small.modelLeaderWin.rate, null);
@@ -205,4 +208,14 @@ test('results CSV winners parse and rates are withheld below the minimum sample'
   const enough = summarize(records, { minSample: 5 });
   assert.equal(enough.modelLeaderWin.rate, 40);
   assert.equal(enough.baselines.agfLeaderWinComparisonOnly.rate, 60);
+});
+
+
+test('fresh history cannot verify a mismatching current price', async (t) => {
+  const { result } = await run(t, { raceNo: 6, currentOdds: '99.00' });
+  assert.equal(result.analysis.status, 'PAS');
+  assert.equal(result.freshness.status, 'UNVERIFIED');
+  assert.equal(result.freshness.valueBound, false);
+  assert.ok(result.analysis.reasonCodes.includes('QUOTE_VALUE_MISMATCH'));
+  assert.deepEqual(result.runners, []);
 });

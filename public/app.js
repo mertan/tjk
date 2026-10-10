@@ -1,4 +1,5 @@
 const state = {
+  config: null,
   day: null,
   race: null,
   selectedRunner: null,
@@ -38,12 +39,14 @@ function pct(value, signed = false) {
 }
 
 function movementClass(value) {
+  if (!Number.isFinite(value)) return '';
   if (value <= -3) return 'support';
   if (value >= 3) return 'drift';
   return '';
 }
 
 function movementArrow(value) {
+  if (!Number.isFinite(value)) return '';
   if (value <= -3) return '↓';
   if (value >= 3) return '↑';
   return '→';
@@ -58,7 +61,7 @@ async function api(path) {
 
 function setLoading(active) {
   state.loading = active;
-  el.refreshButton.disabled = active;
+  el.refreshButton.disabled = active || !state.config;
   el.refreshButton.classList.toggle('loading', active);
   if (!state.race) {
     el.loadingView.hidden = !active;
@@ -81,6 +84,7 @@ function venueByKey() {
 }
 
 async function loadDay({ preserveVenue = true } = {}) {
+  if (!state.config) return;
   showError('');
   setLoading(true);
   try {
@@ -127,7 +131,7 @@ function populateRaces(venue, preserveRace = false) {
 }
 
 async function loadRace({ silent = false, force = false } = {}) {
-  if ((!force && state.loading) || !el.dateInput.value || !el.venueSelect.value || !el.raceSelect.value) return;
+  if (!state.config || (!force && state.loading) || !el.dateInput.value || !el.venueSelect.value || !el.raceSelect.value) return;
   if (!silent) showError('');
   setLoading(true);
   try {
@@ -136,7 +140,11 @@ async function loadRace({ silent = false, force = false } = {}) {
       venue: el.venueSelect.value,
       race: el.raceSelect.value
     });
-    const data = await api(`/api/race?${query}`);
+    const endpoint = state.config.v3Enabled ? '/api/v3/race' : '/api/race';
+    const data = await api(`${endpoint}?${query}`);
+    if (state.config.v3Enabled && (data.analysis?.modelVersion !== 'tjk-v3' || (data.analysis.status === 'OK' && data.analysis.scoreKind !== 'calibrated_probability'))) {
+      throw new Error('V3 model yanıtı doğrulanamadı.');
+    }
     const selectedNumber = state.selectedRunner?.number;
     state.race = { ...data, runners: data.analysis.status === 'PAS' ? (data.observations?.runners || []) : data.runners };
     data.runners = state.race.runners;
@@ -156,8 +164,13 @@ async function loadRace({ silent = false, force = false } = {}) {
   }
 }
 
+function isV3() {
+  return state.race?.analysis?.modelVersion === 'tjk-v3';
+}
+
 function renderDashboard() {
   const data = state.race;
+  const calibrated = isV3() && data.analysis.scoreKind === 'calibrated_probability';
   const leader = data.analysis.picks.leader;
   const steam = data.analysis.picks.steam;
   const value = data.analysis.picks.value;
@@ -169,19 +182,21 @@ function renderDashboard() {
   el.raceStatus.textContent = data.race.status;
   el.updatedTime.textContent = `Güncellendi ${new Date(data.updatedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
 
-  el.confidenceChip.textContent = data.analysis.status === 'PAS' ? 'PAS' : `${data.analysis.confidenceLabel} sinyal`;
+  el.confidenceChip.textContent = data.analysis.status === 'PAS' ? 'PAS' : calibrated ? 'V3 test' : `${data.analysis.confidenceLabel} sinyal`;
   el.leaderNumber.textContent = leader?.number ?? '—';
   el.leaderName.textContent = leader?.name ?? 'PAS — veri yetersiz';
   el.leaderSummary.textContent = [data.analysis.summary, ...(data.analysis.reasonCodes || [])].join(' · ');
-  el.confidenceValue.textContent = `${data.analysis.confidence}/100`;
-  el.confidenceBar.style.width = `${data.analysis.confidence}%`;
+  const displayedScore = calibrated ? leader?.probability : data.analysis.confidence;
+  document.querySelector('.confidence-row span').textContent = calibrated ? 'Kalibre edilmiş kazanma olasılığı' : isV3() ? 'V3 olasılığı — PAS' : 'Sinyal gücü (olasılık değil)';
+  el.confidenceValue.textContent = data.analysis.status === 'PAS' ? '—' : calibrated ? pct(displayedScore) : `${fmt(displayedScore, 0)}/100`;
+  el.confidenceBar.style.width = `${Number.isFinite(displayedScore) && data.analysis.status !== 'PAS' ? Math.max(0, Math.min(100, displayedScore)) : 0}%`;
 
   el.steamPick.textContent = steam ? `${steam.number} ${steam.name}` : '—';
-  el.steamMove.textContent = steam ? `${movementArrow(steam.movement)} Açılıştan ${pct(steam.movement, true)}` : 'Yeterli geçmiş yok';
+  el.steamMove.textContent = steam ? `${movementArrow(steam.movement)} İlk doğrulanmış kayıttan ${pct(steam.movement, true)}` : 'Yeterli geçmiş yok';
   el.valuePick.textContent = value ? `${value.number} ${value.name}` : '—';
   el.valueEdge.textContent = value ? `Model farkı ${pct(value.edge, true)}` : 'Değer adayı yok';
   el.surprisePick.textContent = surprise ? `${surprise.number} ${surprise.name}` : 'Net sürpriz yok';
-  el.surpriseDetail.textContent = surprise ? `${fmt(surprise.odds)} Gny · Puan ${fmt(surprise.probability, 1)}/100` : (data.analysis.status === 'PAS' ? 'Veri yetersiz' : 'Aday yok');
+  el.surpriseDetail.textContent = surprise ? `${fmt(surprise.odds)} Gny · ${calibrated ? 'Olasılık ' + pct(surprise.probability) : 'Puan ' + fmt(surprise.probability, 1) + '/100'}` : (data.analysis.status === 'PAS' ? 'Veri yetersiz' : 'Aday yok');
 
   el.methodology.textContent = data.methodology;
   el.warningText.textContent = data.warning;
@@ -208,11 +223,11 @@ function renderRunners() {
         <div class="runner-tags">${runnerTags(runner)}</div>
       </div>
       <div class="metric mobile-odds"><span>Ganyan</span><strong>${fmt(runner.currentOdds)}</strong></div>
-      <div class="metric optional"><span>Açılış</span><strong>${fmt(runner.openingOdds)}</strong></div>
+      <div class="metric optional"><span>İlk doğrulanmış</span><strong>${fmt(runner.openingOdds)}</strong></div>
       <div class="metric mobile-move"><span>Hareket</span><strong class="${movementClass(runner.movementPercent)}">${movementArrow(runner.movementPercent)} ${pct(runner.movementPercent, true)}</strong></div>
       <div class="metric optional"><span>AGF</span><strong>${pct(runner.agfLatest)}</strong></div>
       <div class="metric optional"><span>Piyasa payı</span><strong>${pct(runner.marketProbability)}</strong></div>
-      <div class="metric mobile-model"><span>Model puanı</span><strong>${fmt(runner.modelProbability, 1)}</strong><div class="probability-track"><i style="width:${Math.min(100, (runner.modelProbability || 0) * 2.5)}%"></i></div></div>
+      <div class="metric mobile-model"><span>${isV3() ? 'V3 olasılığı' : 'Model puanı'}</span><strong>${isV3() ? pct(runner.modelProbability) : fmt(runner.modelProbability, 1)}</strong><div class="probability-track"><i style="width:${Math.min(100, Math.max(0, (runner.modelProbability || 0) * (isV3() ? 1 : 2.5)))}%"></i></div></div>
     </article>
   `).join('');
 
@@ -237,7 +252,14 @@ function selectRunner(number) {
 
 function renderSelectedRunner() {
   const runner = state.selectedRunner;
-  if (!runner) return;
+  if (!runner) {
+    el.chartTitle.textContent = 'Oran hareketi';
+    el.chartStat.textContent = '—';
+    el.detailTitle.textContent = 'At detayı';
+    el.detailList.innerHTML = '';
+    el.historyChart.innerHTML = '<div class="empty-chart">Doğrulanmış at verisi yok.</div>';
+    return;
+  }
   el.chartTitle.textContent = `${runner.number} ${runner.name}`;
   el.chartStat.textContent = `${fmt(runner.openingOdds)} → ${fmt(runner.currentOdds)} (${pct(runner.movementPercent, true)})`;
   el.detailTitle.textContent = `${runner.number} ${runner.name}`;
@@ -259,11 +281,10 @@ function renderSelectedRunner() {
 }
 
 function renderChart(runner) {
-  const raw = [...(runner.history || [])];
-  if (!raw.length || raw.at(-1)?.odds !== runner.currentOdds) {
-    raw.push({ time: 'Şimdi', odds: runner.currentOdds });
-  }
-  const points = raw.filter((point) => Number.isFinite(Number(point.odds)));
+  // Plot only timestamped, verified source observations. Appending the current
+  // quote would manufacture a movement when its observation time is unknown.
+  const points = runner.historyStatus === 'UNVERIFIED' ? [] : (runner.history || [])
+    .filter((point) => Number.isFinite(point.odds) && point.odds > 0 && Number.isFinite(point.at));
   if (points.length < 2) {
     el.historyChart.innerHTML = '<div class="empty-chart">Bu at için henüz yeterli oran geçmişi oluşmadı.</div>';
     return;
@@ -340,5 +361,27 @@ document.querySelectorAll('.market-tab').forEach((tab) => tab.addEventListener('
 }));
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-resetAutoRefresh();
-loadDay({ preserveVenue: false });
+async function initialize() {
+  setLoading(true);
+  try {
+    const config = await api('/api/config');
+    if (typeof config.v3Enabled !== 'boolean') throw new Error('Panel yapılandırması doğrulanamadı.');
+    state.config = config;
+    if (config.v3Enabled) {
+      document.title = 'TJK V3 · Test paneli';
+      document.querySelector('.brand h1').textContent = 'TJK V3 · Test paneli';
+      document.querySelector('.brand .eyebrow').textContent = 'RESMÎ TJK VERİSİ · V3 TEST';
+    }
+    resetAutoRefresh();
+    await loadDay({ preserveVenue: false });
+  } catch (error) {
+    state.config = null;
+    state.race = null;
+    setLoading(false);
+    el.loadingView.hidden = true;
+    showError(`PAS — ${error.message}`);
+    setConnected(false);
+  }
+}
+
+const ready = initialize();

@@ -29,7 +29,7 @@ async function run(t, { raceNo = 6, csvBody = csv, modify = () => {}, modifyRace
     if (url.endsWith('checksum.json')) return response({ success: true, day: key, datetime: new Date().toISOString(), runs: { [`${key}-${raceNo}`]: ['hash'] } });
     if (url.includes('/day-')) return response({ success: true, data: { yarislar: [{ KEY: key, YER: 'Belmont Park ABD', HIPODROM: 'Belmont Park', kosular: [race], atlar: { [raceNo]: Object.fromEntries(program.runners.map((r) => [r.number, r.rawName])) } }] } });
     if (url.endsWith('.csv')) return new Response((csvBody || '').replace('08/10/2026', `${day}/10/2026`), { status: csvBody === null ? 404 : 200 });
-    if (url.includes('/history?')) return response({ success: true, data: { labels: Array.from({ length: 45 }, (_, i) => `2026-10-08T18:${String(i).padStart(2, '0')}:00Z`), datasets: [{ data: Array.from({ length: 45 }, (_, i) => i === 0 ? 4 : 3.2) }] } });
+    if (url.includes('/history?')) return response({ success: true, data: { labels: Array.from({ length: 45 }, (_, i) => `${date}T18:${String(i).padStart(2, '0')}:00Z`), datasets: [{ data: Array.from({ length: 45 }, (_, i) => i === 0 ? 4 : 3.2) }] } });
     return response({ success: true, data: { muhtemeller: info } });
   });
   const result = await buildRaceAnalysis(date, key, raceNo);
