@@ -51,3 +51,12 @@ API `analysis.status` ve `reasonCodes` döndürür. PAS'ta `runners=[]` ve büt�
 **Canlı veri sınırı:** Mevcut kaynak koşuya özgü oran güncelleme zamanını doğrulamıyor. Canlı adaptör `SOURCE_FRESHNESS_UNVERIFIED / PAS` döndürür; koşunun planlanan saatini, günlük checksum saatini veya yerel indirme zamanını taze kotasyon kanıtı olarak kullanmaz. Puanlama motoru eksiksiz doğrulanmış girdiler için kullanılabilir; canlı adayları açmadan önce kaynak zamanının anlamı doğrulanmalıdır.
 
 Yerel doğrulama: Node.js 24.19.0 üzerinde 35 test başarılı. HTTP yanıt gövdesi okunurken bağlantı kopması ve bozuk kaynak saatleri de PAS ile kapanır. GitHub Actions Node 20/24 matrisi yalnız test ve sözdizimi kontrolü çalıştırır; dağıtım adımı içermez.
+
+## Tazelik, handikap, önbellek ve backtest
+
+- **Tazelik:** Sabit `SOURCE_FRESHNESS_UNVERIFIED` kaldırıldı. Koşu yalnızca TJK nabzı (`checksum.datetime`, ≤180 sn) ve her koşan atın son zaman damgalı oran noktası (≤720 sn, saat kayması ≤120 sn) doğrulanırsa analiz edilir. Etiketler Europe/Istanbul (UTC+3) saatidir. Aksi halde `SOURCE_FRESHNESS_UNVERIFIED` + `QUOTE_STALE` / `QUOTE_TIMESTAMP_MISSING` / `SOURCE_HEARTBEAT_STALE` / `SOURCE_CLOCK_SKEW` ile PAS. Ayrıntı `freshness` alanında.
+- **Handikap:** Yurt içi programlarda boş hücre = eksik (`RATING_MISSING`), yurt dışı programlarda `0` = puansız (`RATING_UNRATED`); yurt içi `0` gerçek sıfırdır. Eksik/puansız değer doldurulmaz, koşu PAS olur.
+- **AGF:** Puana katılmaz; yalnızca `analysis.agfComparison` altında karşılaştırma için raporlanır.
+- **TJK yükü:** Sınırlı LRU önbellek (`CACHE_MAX_ENTRIES`), eşzamanlı aynı istek birleştirme, global giden istek sınırlayıcı (`UPSTREAM_CONCURRENCY`, `UPSTREAM_MIN_INTERVAL_MS`) ve istemci başına `/api` hız sınırı (`RATE_LIMIT_PER_MIN`, varsayılan 120/dk; Render'da `TRUST_PROXY=1`).
+- **Sağlık:** `/healthz` dış servise gitmez; Render sağlık kontrolü buna bağlıdır.
+- **Backtest:** `node scripts/backtest.mjs --from 2026-09-26 --to 2026-10-09 --venues domestic --cutoff-min 5 --out rapor.json`. Tahmin yalnızca koşu saatinden `cutoff` dakika önceki zaman damgalı oranlar ve program CSV ile kurulur; sonuç koşu sonrası resmî GANYAN sırası (`R`) ve resmî sonuç CSV kazananıyla çapraz kontrol edilir. En az `--min-sample` (30) geçerli tahmin yoksa oran verilmez.
