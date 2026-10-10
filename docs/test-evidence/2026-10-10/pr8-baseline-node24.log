@@ -1,0 +1,62 @@
+
+> tjk-canli-radar@1.0.0 test
+> node --test
+
+✔ complete field produces compatible scores and actual-history support (2.987894ms)
+✔ AGF values, ranks, availability and malformed numbers cannot change any decision (1.33574ms)
+✔ invalid fields fail closed for all runners instead of dropping the incomplete runner (1.198543ms)
+✔ empty, one-runner, duplicate-number and malformed fields cannot be predicted (0.25933ms)
+✔ all-zero ratings fail instead of receiving a uniform fallback (0.513162ms)
+✔ opening/current fallback and caller-supplied movement cannot manufacture history (0.376336ms)
+✔ external race gates force PAS and strip previously attached prediction fields (0.275745ms)
+✔ only explicitly withdrawn runners are excluded; at least two active runners are needed (0.27938ms)
+✔ finite large ratings normalize without overflow (0.290737ms)
+✔ TJK Istanbul wall-clock labels parse to UTC; malformed times are rejected (1.304102ms)
+✔ freshness is verified only by recent real timestamps (1.034516ms)
+✔ rating 0 is unrated abroad, a real zero at home; empty is missing and never imputed (0.586683ms)
+✔ Belmont 5 and 6 produce predictions with fresh timestamps and keep their own runner sets (584.75923ms)
+✔ stale history or stale heartbeat on the same race is PAS with explicit reasons (603.021726ms)
+✔ cache coalesces concurrent producers, never caches failures and stays bounded (21.718199ms)
+✔ rate limiter blocks after the per-window budget (0.588756ms)
+✔ /healthz never calls TJK; /api is rate limited per client (23.669715ms)
+✔ backtest uses only points at or before the cutoff and wraps midnight post times (1.649621ms)
+✔ results CSV winners parse and rates are withheld below the minimum sample (0.887345ms)
+✔ official Belmont Park fixture preserves all nine separate races (6.479797ms)
+✔ Belmont 5: named colon header, nine runners, no race 6 contamination (3.279644ms)
+✔ Belmont 6: unnamed colon-free header starts its own eight-runner race (1.573357ms)
+✔ program filename joins venue words and stays on the official report host (3.159463ms)
+✔ unsafe or missing filename input cannot create a report URL (0.680333ms)
+✔ Turkish/ASCII race titles accept optional names, colons and either clock delimiter (0.399832ms)
+✔ malformed race boundaries cannot append runners to a previous race (0.527804ms)
+✔ every copy of a duplicated race number is omitted, even if one header is malformed (0.346882ms)
+✔ duplicate nonempty column labels omit the affected race instead of overwriting fields (0.343466ms)
+✔ repeated or redefined runner headers invalidate the affected race (0.346231ms)
+✔ short rows missing labelled cells omit a race; explicit empty cells and unlabelled extras stay missing (0.27901ms)
+✔ invalid or duplicate runner IDs omit the affected race without damaging the next race (0.415035ms)
+✔ a runner table cannot reopen after its official betting footer (0.227332ms)
+✔ semicolon CSV quotes preserve cell boundaries and escaped quotes (0.218038ms)
+✔ empty or incomplete quoted source returns no fabricated program (0.114322ms)
+✔ Belmont API uses the official filename and keeps races 5 and 6 separate (580.238811ms)
+✔ missing program and invalid active odds produce PAS without silently dropping a horse (580.30797ms)
+✔ official results and incomplete participant fields cannot become predictions (577.241684ms)
+✔ upstream network failures are explicit PAS while invalid user arguments stay errors (25.075386ms)
+✔ response-body failures stay PAS for mandatory and optional sources (631.555178ms)
+✔ malformed race clocks fail closed without throwing a source TypeError (906.353971ms)
+✔ malformed source payloads are source failures, not user errors or server crashes (507.863192ms)
+✔ wrong program date/place is unavailable rather than lending another race its ratings (604.630759ms)
+✔ schedule timestamps and fresh day heartbeats never certify race quote freshness (0.795967ms)
+✔ TJK CSV programını koşu ve atlara ayırır (2.375423ms)
+✔ analiz motoru favori, değer ve hareket sinyali üretir (0.702897ms)
+ℹ tests 45
+ℹ suites 0
+ℹ pass 45
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4596.006668
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

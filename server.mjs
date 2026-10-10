@@ -474,14 +474,20 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
 
   const runners = (ganyan.muhtemeller || []).map((item) => {
     const number = String(item.S1);
-    const currentOdds = parseDecimal(item.G);
+    const reportedCurrentOdds = parseDecimal(item.G);
     const program = programByNumber.get(number) || {};
-    const historyData = historyByNumber.get(number) || historyMetrics([], currentOdds);
+    const historyData = historyByNumber.get(number) || historyMetrics([], reportedCurrentOdds);
+    // Score the timestamped history record itself. G is a separate consistency
+    // check, never an untimed substitute for a missing quote record.
+    const timestampedQuote = historyData.points.filter((point) => Number.isFinite(point.at))
+      .reduce((latest, point) => !latest || point.at > latest.at ? point : latest, null);
+    const currentOdds = timestampedQuote?.odds ?? null;
     const agfSeries = program.agf || [];
     return {
       number: Number(number),
       name: horseNames[number] || program.rawName || '',
       currentOdds,
+      reportedCurrentOdds,
       openingOdds: historyData.openingOdds,
       lowOdds: historyData.lowOdds,
       highOdds: historyData.highOdds,
@@ -507,13 +513,32 @@ async function collectRaceAnalysis(date, venueKey, raceNumber) {
   // Each active runner's newest timestamped odds point is its quote time.
   const quoteTimes = runners.map((runner) => Math.max(...runner.history.map((point) => point.at).filter(Number.isFinite)));
   const gate = raceGate(feed, programRace, { quoteTimes });
+  // A history clock cannot certify an unrelated current GANYAN price.
+  const bindingReasons = [];
+  for (const runner of runners) {
+    const ordered = runner.history.filter((point) => Number.isFinite(point.at)).sort((a, b) => a.at - b.at);
+    const latest = ordered.at(-1);
+    if (!latest || latest.odds !== runner.currentOdds || runner.reportedCurrentOdds !== runner.currentOdds
+        || ordered.some((point) => point.at === latest.at && point.odds !== latest.odds)) {
+      bindingReasons.push('QUOTE_VALUE_MISMATCH');
+    }
+    if (runner.history.some((point, index, all) => !Number.isFinite(point.at)
+        || (index > 0 && point.at < all[index - 1].at))) bindingReasons.push('QUOTE_HISTORY_INVALID');
+    runner.quoteAt = latest ? new Date(latest.at).toISOString() : null;
+  }
+  if (bindingReasons.length) {
+    gate.reasons = [...new Set([...gate.reasons, 'SOURCE_FRESHNESS_UNVERIFIED', ...bindingReasons])];
+    gate.freshness.status = 'UNVERIFIED';
+    gate.freshness.reasons = [...new Set([...gate.freshness.reasons, 'SOURCE_FRESHNESS_UNVERIFIED', ...bindingReasons])];
+  }
+  gate.freshness.valueBound = bindingReasons.length === 0 && runners.length > 0;
   const analysis = analyzeRunners(runners, { reasonCodes: gate.reasons });
   const marketMap = Object.fromEntries(bets.map((bet) => [bet.B, formatMarketItems(bet, horseNames, nextRaceHorseNames)]));
   const raceInfo = feed.racePayload.data.muhtemeller;
   return {
     date: normalizeDate(date),
     updatedAt: new Date().toISOString(),
-    sourceTime: feed.checksum.datetime || null,
+    sourceTime: gate.freshness.oldestQuoteAt,
     freshness: gate.freshness,
     venue: {
       key: feed.key,
@@ -653,11 +678,9 @@ async function serveStatic(pathname, res) {
   res.end(data);
 }
 
-function clientAddress(req, trustProxy) {
-  if (trustProxy) {
-    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-    if (forwarded) return forwarded;
-  }
+function clientAddress(req) {
+  // No deployment-specific trusted proxy chain is established. Forwarded
+  // headers are untrusted input; use the actual peer (shared behind a proxy).
   return req.socket.remoteAddress || 'unknown';
 }
 
@@ -669,7 +692,7 @@ async function handleRequest(req, res, context) {
   }
   if (req.method !== 'GET') throw new HttpError(405, 'Yalnızca GET destekleniyor.');
   if (url.pathname.startsWith('/api/')) {
-    const verdict = context.rateLimit(clientAddress(req, context.trustProxy));
+    const verdict = context.rateLimit(clientAddress(req));
     if (!verdict.allowed) {
       res.setHeader('retry-after', String(verdict.retryAfterSec));
       throw new HttpError(429, 'Çok fazla istek. Lütfen biraz sonra tekrar deneyin.');
@@ -702,10 +725,9 @@ export function startServer({
   port = PORT,
   host = '0.0.0.0',
   rateLimitPerMin = Number(process.env.RATE_LIMIT_PER_MIN || 120),
-  trustProxy = process.env.TRUST_PROXY === '1',
   quiet = false
 } = {}) {
-  const context = { rateLimit: createRateLimiter({ windowMs: 60_000, max: rateLimitPerMin }), trustProxy };
+  const context = { rateLimit: createRateLimiter({ windowMs: 60_000, max: rateLimitPerMin }) };
   const server = createServer((req, res) => {
     handleRequest(req, res, context).catch((error) => {
       const status = error instanceof HttpError ? error.status : 500;

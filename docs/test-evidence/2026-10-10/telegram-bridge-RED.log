@@ -1,0 +1,29 @@
+EFF
+======================================================================
+ERROR: test_fresh_bound_engine_prediction_can_cross_explicit_evidence_bridge (test_engine_bridge.MissingIntegrationRegression.test_fresh_bound_engine_prediction_can_cross_explicit_evidence_bridge)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tjk-integration/tools/telegram-commands/tests/test_engine_bridge.py", line 34, in test_fresh_bound_engine_prediction_can_cross_explicit_evidence_bridge
+    from tjk_commands.engine_bridge import RaceEngineProvider, RaceSnapshot
+ModuleNotFoundError: No module named 'tjk_commands.engine_bridge'
+
+======================================================================
+FAIL: test_help_is_handled_by_shared_callback (test_engine_bridge.MissingIntegrationRegression.test_help_is_handled_by_shared_callback)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tjk-integration/tools/telegram-commands/tests/test_engine_bridge.py", line 16, in test_help_is_handled_by_shared_callback
+    self.assertIsNotNone(reply)
+AssertionError: unexpectedly None
+
+======================================================================
+FAIL: test_pas_explains_missing_provider_in_turkish (test_engine_bridge.MissingIntegrationRegression.test_pas_explains_missing_provider_in_turkish)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tjk-integration/tools/telegram-commands/tests/test_engine_bridge.py", line 21, in test_pas_explains_missing_provider_in_turkish
+    self.assertIn('Veri sağlayıcısı bağlı değil', reply.text)
+AssertionError: 'Veri sağlayıcısı bağlı değil' not found in '/basket | PAS | PROVIDER_UNAVAILABLE, MANDATORY_DATA_MISSING, MISSING_PREDICTION_DATA, EVENT_TIME_UNVERIFIED'
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.003s
+
+FAILED (failures=2, errors=1)

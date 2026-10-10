@@ -10,7 +10,6 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { buildProgramCsvUrl, programForVenueCsv } from '../server.mjs';
 import { createLimiter } from '../tjk-cache.mjs';
-import { isWithdrawn } from '../race-gates.mjs';
 import { postTimes, predictAtCutoff, resultRanks, resultsCsvWinners, summarize } from '../backtest.mjs';
 
 const STATIC_BASE = 'https://vhs-medya-cdn.tjk.org/muhtemeller/s';
@@ -39,9 +38,19 @@ if (to >= today) {
 }
 const cutoffMin = Number(opts['cutoff-min'] || 5);
 const minSample = Number(opts['min-sample'] || 30);
+const concurrency = Number(opts.concurrency || 2);
+const intervalMs = Number(opts['interval-ms'] || 300);
+const validDate = (value) => Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+if (!validDate(from) || !validDate(to) || !Number.isFinite(cutoffMin) || cutoffMin <= 0 || cutoffMin > 1440
+    || !Number.isSafeInteger(minSample) || minSample < 1
+    || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4
+    || !Number.isFinite(intervalMs) || intervalMs < 100) {
+  console.error('INVALID_BACKTEST_ARGUMENTS');
+  process.exit(2);
+}
 const venuesArg = opts.venues || 'domestic';
 const cacheDir = opts['cache-dir'] || '.backtest-cache';
-const limiter = createLimiter({ concurrency: Number(opts.concurrency || 2), minIntervalMs: Number(opts['interval-ms'] || 300) });
+const limiter = createLimiter({ concurrency, minIntervalMs: intervalMs });
 await mkdir(cacheDir, { recursive: true });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -137,12 +146,13 @@ for (const date of dates(from, to)) {
       const names = venue.atlar?.[String(no)] || {};
       const runners = await Promise.all(rows.map(async (row) => {
         const number = Number(row.S1);
-        const out = isWithdrawn(row.KOSMAZ);
+        // Archive withdrawals are not known at cutoff. Never consume them as inputs.
+        const out = false;
         return {
           number,
           name: names[number] || programBy.get(number)?.rawName || '',
           out,
-          history: out ? [] : await history(date, venue.KEY, no, number),
+          history: await history(date, venue.KEY, no, number),
           program: programBy.get(number)
         };
       }));
@@ -164,7 +174,7 @@ const byVenue = {};
 for (const record of records) {
   const entry = byVenue[record.venue] ||= { races: 0, valid: 0, leaderWins: 0 };
   entry.races += 1;
-  if (record.prediction.status === 'OK' && record.winners) {
+  if (record.prediction.status === 'OK' && record.resultCheck === 'CONFIRMED' && record.winners) {
     entry.valid += 1;
     if (record.winners.includes(record.prediction.leader)) entry.leaderWins += 1;
   }
@@ -173,9 +183,10 @@ const report = {
   generatedAt: new Date().toISOString(),
   params: { from, to, venues: venuesArg, cutoffMinutesBeforePost: cutoffMin, minSample, modelVersion: 'market-no-agf-v2' },
   methodNotes: [
-    'Tahmin girdileri: kesimden (koşu saati - cutoff) önceki zaman damgalı ganyan noktaları ve koşu öncesi program CSV (handikap).',
+    'Geçerli tahmin için kesim öncesinde kaydedilmiş katılımcı/program girdileri ve kesime kadar zaman damgalı ganyan noktaları gerekir.',
     'Sonuç: koşu sonrası resmi GANYAN R sırası; resmi sonuç CSV kazananıyla çapraz kontrol (CONFLICT olan koşu dışlanır).',
-    'Bilinen sınır: koşmaz listesi ve program CSV içindeki AGF serisi koşu sonrası arşivden okunur; AGF yalnızca karşılaştırma tabanında kullanılır.',
+    'Arşiv programı/katılımcı/handikap/AGF için kesim öncesi kayıt kanıtı yok: PRE_CUTOFF_INPUT_SNAPSHOT_UNVERIFIED/PAS. Bu CLI geçmiş tahmin başarısı veya kazanç kanıtı üretmez.',
+    'Yalnız CONFIRMED sonuçlar başarı paydasına girer; PAYLOAD_ONLY ve CONFLICT hariçtir.',
     `Oranlar yalnızca en az ${minSample} geçerli tahminde verilir; altında yalnızca sayımlar raporlanır.`
   ],
   summary,

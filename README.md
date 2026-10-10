@@ -48,7 +48,7 @@ Belmont 8 Ekim 2026 resmî CSV fixture'ı 5. ve 6. koşuların karışmasını t
 
 API `analysis.status` ve `reasonCodes` döndürür. PAS'ta `runners=[]` ve bütün adaylar `null` olur; ham gözlemler `observations.runners` içindedir. Böylece `status` alanını henüz tanımayan tüketiciler PAS yanıtından yeniden aday üretemez. `modelProbability` geriye uyumluluk adıdır, gerçek kazanma olasılığı değildir.
 
-**Canlı veri sınırı:** Mevcut kaynak koşuya özgü oran güncelleme zamanını doğrulamıyor. Canlı adaptör `SOURCE_FRESHNESS_UNVERIFIED / PAS` döndürür; koşunun planlanan saatini, günlük checksum saatini veya yerel indirme zamanını taze kotasyon kanıtı olarak kullanmaz. Puanlama motoru eksiksiz doğrulanmış girdiler için kullanılabilir; canlı adayları açmadan önce kaynak zamanının anlamı doğrulanmalıdır.
+**Canlı veri sınırı:** Zaman damgalı oran geçmişi yalnız aynı kayıttaki fiyatla puanlanır; GANYAN G ile uyuşmazlık PAS'tır. Program saati ve checksum kotasyon zamanı yerine geçmez. Tam kaynak/katılımcı/program kanıtı ile bilinen gecikme olmadan ortak Telegram köprüsü PAS kalır; bu değişiklik canlı sağlayıcı bağlantısı kanıtı değildir.
 
 Yerel doğrulama: Node.js 24.19.0 üzerinde 35 test başarılı. HTTP yanıt gövdesi okunurken bağlantı kopması ve bozuk kaynak saatleri de PAS ile kapanır. GitHub Actions Node 20/24 matrisi yalnız test ve sözdizimi kontrolü çalıştırır; dağıtım adımı içermez.
 
@@ -57,6 +57,15 @@ Yerel doğrulama: Node.js 24.19.0 üzerinde 35 test başarılı. HTTP yanıt gö
 - **Tazelik:** Sabit `SOURCE_FRESHNESS_UNVERIFIED` kaldırıldı. Koşu yalnızca TJK nabzı (`checksum.datetime`, ≤180 sn) ve her koşan atın son zaman damgalı oran noktası (≤720 sn, saat kayması ≤120 sn) doğrulanırsa analiz edilir. Etiketler Europe/Istanbul (UTC+3) saatidir. Aksi halde `SOURCE_FRESHNESS_UNVERIFIED` + `QUOTE_STALE` / `QUOTE_TIMESTAMP_MISSING` / `SOURCE_HEARTBEAT_STALE` / `SOURCE_CLOCK_SKEW` ile PAS. Ayrıntı `freshness` alanında.
 - **Handikap:** Yurt içi programlarda boş hücre = eksik (`RATING_MISSING`), yurt dışı programlarda `0` = puansız (`RATING_UNRATED`); yurt içi `0` gerçek sıfırdır. Eksik/puansız değer doldurulmaz, koşu PAS olur.
 - **AGF:** Puana katılmaz; yalnızca `analysis.agfComparison` altında karşılaştırma için raporlanır.
-- **TJK yükü:** Sınırlı LRU önbellek (`CACHE_MAX_ENTRIES`), eşzamanlı aynı istek birleştirme, global giden istek sınırlayıcı (`UPSTREAM_CONCURRENCY`, `UPSTREAM_MIN_INTERVAL_MS`) ve istemci başına `/api` hız sınırı (`RATE_LIMIT_PER_MIN`, varsayılan 120/dk; Render'da `TRUST_PROXY=1`).
+- **TJK yükü:** Sınırlı LRU önbellek (`CACHE_MAX_ENTRIES`), eşzamanlı aynı istek birleştirme, global giden istek sınırlayıcı (`UPSTREAM_CONCURRENCY`, `UPSTREAM_MIN_INTERVAL_MS`) ve istemci başına `/api` hız sınırı (`RATE_LIMIT_PER_MIN`, varsayılan 120/dk; soket eşine göre, proxy başlıklarına güvenilmez).
 - **Sağlık:** `/healthz` dış servise gitmez; Render sağlık kontrolü buna bağlıdır.
-- **Backtest:** `node scripts/backtest.mjs --from 2026-09-26 --to 2026-10-09 --venues domestic --cutoff-min 5 --out rapor.json`. Tahmin yalnızca koşu saatinden `cutoff` dakika önceki zaman damgalı oranlar ve program CSV ile kurulur; sonuç koşu sonrası resmî GANYAN sırası (`R`) ve resmî sonuç CSV kazananıyla çapraz kontrol edilir. En az `--min-sample` (30) geçerli tahmin yoksa oran verilmez.
+- **Backtest:** `node scripts/backtest.mjs --from 2026-09-26 --to 2026-10-09 --venues domestic --cutoff-min 5 --out rapor.json`. Arşiv CLI sonuçları çapraz kontrol eder; kesim öncesi gerçek girdi kaydı kanıtı olmadığından tahminler PAS olur. Sonradan öğrenilen KOSMAZ bilgisi kullanılmaz. Yalnız CONFIRMED sonuçlar ve doğrulanmış kesim öncesi tahminler, en az `--min-sample` (30) örnekle başarı oranına girebilir; mevcut CLI kazanç/üstünlük kanıtı vermez.
+
+
+## 2026-10-10 bağımsız inceleme ve entegrasyon
+
+Oran tazeliği artık aynı atın **puanlanan fiyatı ile son geçmiş noktasının fiyat/zaman eşleşmesini** gerektirir; uyuşmazlık PAS olur. `quoteAt` at bazındadır, `sourceTime` en eski bağlı oran zamanıdır. Telegram köprüsü daha sıkı 60 saniye sınırını korur. Tam kaynak/program kanıtı yokken VERIFIED tek başına canlı tahmin izni değildir.
+
+Backtest arşivdeki yarış sonrası KOSMAZ bilgisini tahmin girdisi yapmaz. Gerçek kesim öncesi girdi kaydı kanıtı bulunmayan örnekler `PRE_CUTOFF_INPUT_SNAPSHOT_UNVERIFIED/PAS` olur; mevcut arşiv CLI bu kanıtı sağlamaz. Yalnız `CONFIRMED` sonuçlar başarı paydasına alınabilir. Bu çalışma kazanç veya model üstünlüğü kanıtlamaz.
+
+[İnceleme, bağımlılıklar, test kanıtı ve canlı erişim sınırları](docs/pr8-independent-review-20261010.md) · [Mevcut Telegram alıcısı için motor köprüleri](tools/telegram-commands/README.md#integration-review-2026-10-10).

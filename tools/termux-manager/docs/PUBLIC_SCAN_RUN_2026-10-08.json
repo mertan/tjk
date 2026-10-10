@@ -1,0 +1,79 @@
+{
+  "mode": "public_fintable_research",
+  "decision": "PAS",
+  "data_status": "DATA_UNAVAILABLE",
+  "execution_enabled": false,
+  "evaluated_at": "2026-10-08T14:20:58.220580Z",
+  "candidates": [],
+  "watchlist": [],
+  "reasons": [
+    "network_unavailable",
+    "network_unavailable",
+    "PUBLIC_UNIVERSE_UNAVAILABLE"
+  ],
+  "securities": [],
+  "sources": [
+    {
+      "provider": "Nasdaq Trader",
+      "url": "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+      "status": "unavailable",
+      "attempted_at": "2026-10-08T14:20:58.259147Z",
+      "retrieved_at": null,
+      "source_timestamp": null,
+      "delay_seconds": null,
+      "freshness_verified": false,
+      "error": "network_unavailable"
+    },
+    {
+      "provider": "Nasdaq Trader",
+      "url": "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+      "status": "unavailable",
+      "attempted_at": "2026-10-08T14:20:58.381506Z",
+      "retrieved_at": null,
+      "source_timestamp": null,
+      "delay_seconds": null,
+      "freshness_verified": false,
+      "error": "network_unavailable"
+    }
+  ],
+  "quote_status": "VERIFIED_EXECUTABLE_NBBO_UNAVAILABLE",
+  "risk_limits": {
+    "capital_try": "50000",
+    "position_cap_try": "12500",
+    "planned_stop_pct": "3",
+    "daily_loss_limit_try": "2500",
+    "min_price_usd": "1",
+    "max_price_usd": "5",
+    "max_spread_usd": "0.05",
+    "max_spread_pct": "2.500"
+  },
+  "coverage": {
+    "exchanges": [
+      "NASDAQ",
+      "NYSE"
+    ],
+    "universe_count": 0,
+    "observation_count": 0,
+    "sec_review_count": 0,
+    "unobserved_count": 0,
+    "complete_market_scan": false,
+    "symbol_limit": 20,
+    "requested_count": 0,
+    "price_range_count": 0,
+    "price_available_count": 0,
+    "selection": "first_20_directory_symbols_alphabetically"
+  },
+  "attribution": {
+    "provider": "Fintable",
+    "url": "https://fintable.io",
+    "terms_url": "https://fintable.io/terms-of-service"
+  },
+  "limitations": [
+    "PERSONAL_NONCOMMERCIAL_RESEARCH_ONLY",
+    "FINTABLE_PRICES_CAN_BE_CACHED_UP_TO_ONE_HOUR_NOT_FOR_TRADING",
+    "IEX_VOLUME_IS_NOT_CONSOLIDATED_US_VOLUME",
+    "NO_BID_ASK_NEWS_OR_VERIFIED_MARKET_SESSION_FROM_THIS_PROVIDER",
+    "DIRECTORY_SAMPLE_IS_NOT_A_MARKET_WIDE_MOMENTUM_RANKING"
+  ],
+  "completed_at": "2026-10-08T14:20:58.407158Z"
+}
