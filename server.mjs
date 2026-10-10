@@ -24,6 +24,8 @@ const REPORT_BASE = 'https://medya-cdn.tjk.org/raporftp/TJKPDF';
 const cache = createCache({ maxEntries: Number(process.env.CACHE_MAX_ENTRIES || 500) });
 const upstream = createLimiter({
   concurrency: Number(process.env.UPSTREAM_CONCURRENCY || 6),
+  // Rate pacing must survive system-clock adjustments and source-time test clocks.
+  now: () => performance.now(),
   minIntervalMs: Number(process.env.UPSTREAM_MIN_INTERVAL_MS || 25)
 });
 
@@ -418,7 +420,7 @@ async function getHistory(date, venueKey, raceNumber, horseNumber) {
   const payload = await cached(`history:${normalized}:${key}:${no}:${horse}`, 8_000, () =>
     fetchJson(`${HISTORY_BASE}?${query.toString()}`, { optional: true })
   );
-  return parseOddsHistory(payload, { date: normalized });
+  return parseOddsHistory(payload, { date: normalized, expectedRunner: Number(horse) });
 }
 
 function formatMarketItems(bet, horseNames, nextRaceHorseNames) {
@@ -587,6 +589,10 @@ async function collectRaceAnalysis(date, venueKey, raceNumber, { v3 = false, sna
     programRace, date, venueKey, quote: prepared.quote,
     reasonCodes: [...analysis.reasonCodes, ...prepared.reasonCodes, ...(feed.venue.YURTDISI ? ['V3_FOREIGN_UNSUPPORTED'] : [])]
   });
+  const finalGate = raceGate(feed, programRace, { quoteTimes });
+  if (result.status === 'OK' && finalGate.reasons.length) {
+    return v3Envelope(response, { status: 'PAS', reasonCodes: finalGate.reasons, runners: [] });
+  }
   return v3Envelope(response, result);
 }
 

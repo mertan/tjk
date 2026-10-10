@@ -206,3 +206,60 @@ test('installation audit handles missing files and invalid CLI options without t
   assert.equal(missing.weightsCount, null);
   assert.equal(missing.backtestVerified, false);
 });
+
+test('hash-matched corrupt historical outcomes cannot silently alter trained features', () => {
+  const changes = [
+    (r) => { r.position = '1'; },
+    (r) => { r.position = 0; },
+    (r) => { r.position = -1; },
+    (r) => { r.position = 1.5; },
+    (r) => { r.position = NaN; },
+    (r) => { delete r.position; },
+    (r) => { r.finishTime = '81'; },
+    (r) => { r.finishTime = 0; },
+    (r) => { r.finishTime = -81; },
+    (r) => { r.finishTime = Infinity; },
+    (r) => { r.finishTime = null; },
+    (r) => { delete r.finishTime; },
+    (r) => { r.position = null; }
+  ];
+  for (const change of changes) {
+    const input = fixture();
+    change(input.history[0].runners[0]);
+    input.artifact.historySha256 = historyDigest(input.history);
+    const result = predictLiveV3(input);
+    assert.equal(result.status, 'PAS');
+    assert.ok(result.reasonCodes.includes('V3_HISTORY_INVALID'));
+    assert.deepEqual(result.runners, []);
+    assert.equal(auditLiveV3(input.artifact, input.history).status, 'PAS');
+  }
+});
+
+test('historical unmatched and unplaced missingness retain the collector semantics', () => {
+  for (const matched of [false, true]) {
+    const input = fixture();
+    const runner = input.history[0].runners[1];
+    runner.position = null;
+    if (matched) runner.finishTime = null;
+    else delete runner.finishTime;
+    input.artifact.historySha256 = historyDigest(input.history);
+    assert.equal(predictLiveV3(input).status, 'OK');
+    assert.equal(auditLiveV3(input.artifact, input.history).status, 'VALID_MANIFEST');
+  }
+});
+
+test('a history snapshot without any recorded winner is not training evidence', () => {
+  const input = fixture();
+  for (const race of input.history) {
+    for (const runner of race.runners) {
+      runner.position = null;
+      runner.finishTime = null;
+    }
+  }
+  input.artifact.historySha256 = historyDigest(input.history);
+  const result = predictLiveV3(input);
+  assert.equal(result.status, 'PAS');
+  assert.ok(result.reasonCodes.includes('V3_HISTORY_OUTCOMES_MISSING'));
+  assert.deepEqual(result.runners, []);
+  assert.equal(auditLiveV3(input.artifact, input.history).status, 'PAS');
+});

@@ -64,6 +64,13 @@ const validIdentity = (race) => isObject(race) && isDate(race.date)
     && validKey(runner.key) && typeof runner.scratched === 'boolean')
   && new Set(race.runners.map((runner) => runner.number)).size === race.runners.length
   && new Set(race.runners.map((runner) => runner.key)).size === race.runners.length;
+// joinResults always records position; an unmatched runner has position:null
+// and omits finishTime, while an unplaced matched runner has both values null.
+// Reject coercible strings before feature builders apply truthiness/arithmetic.
+const validHistoricalOutcome = (runner) => {
+  if (runner.position === null) return runner.finishTime === null || runner.finishTime === undefined;
+  return positiveInt(runner.position) && finite(runner.finishTime) && runner.finishTime > 0;
+};
 const sourceDay = (at) => finite(at) && Math.abs(at) < 8e15
   ? new Date(at + 3 * 3_600_000).toISOString().slice(0, 10) : null;
 
@@ -72,10 +79,14 @@ export function validateHistory(history, { expectedSha256, beforeDate } = {}) {
   if (!Array.isArray(history) || !history.length) {
     return { ok: false, reasonCodes: ['V3_HISTORY_MISSING'], sha256: null };
   }
-  if (!history.every(validIdentity) || new Set(history.map(raceId)).size !== history.length) {
+  if (!history.every(validIdentity) || new Set(history.map(raceId)).size !== history.length
+    || history.some((race) => !race.runners.every(validHistoricalOutcome))) {
     return { ok: false, reasonCodes: ['V3_HISTORY_INVALID'], sha256: null };
   }
   const reasons = [];
+  if (!history.some((race) => race.runners.some((runner) => runner.position === 1))) {
+    reasons.push('V3_HISTORY_OUTCOMES_MISSING');
+  }
   if (beforeDate && history.some((item) => item.date >= beforeDate)) reasons.push('V3_HISTORY_LOOKAHEAD');
   let sha256;
   try { sha256 = historyDigest(history); } catch {

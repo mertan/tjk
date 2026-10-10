@@ -7,17 +7,20 @@ const round = (value, digits = 2) => Number.isFinite(value) ? Number(value.toFix
 // An adjacent tenfold discontinuity must be investigated before any movement signal.
 export const MAX_ADJACENT_ODDS_RATIO = 10;
 
-export function parseOddsHistory(payload, { date } = {}) {
+export function parseOddsHistory(payload, { date, expectedRunner } = {}) {
   const data = payload?.data;
   if (!payload?.success || !Array.isArray(data?.labels) || !Array.isArray(data?.datasets)
       || data.datasets.length !== 1 || !Array.isArray(data.datasets[0]?.data)
       || data.labels.length !== data.datasets[0].data.length) return [];
+  const datasetLabel = data.datasets[0].label;
+  const runnerMatches = expectedRunner === undefined || datasetLabel === undefined
+    || String(datasetLabel).trim() === String(expectedRunner);
   return data.labels.map((label, index) => {
     const raw = data.datasets[0].data[index];
     const text = typeof raw === 'number' || typeof raw === 'string' ? String(raw).trim().replace(',', '.') : '';
     const at = parseSourceTime(label);
     const dateMatches = !date || (Number.isFinite(at) && new Date(at + 3 * 3600000).toISOString().slice(0, 10) === date);
-    return { label, dateMatches, time: typeof label === 'string' ? label.slice(11, 16) : '',
+    return { label, dateMatches, runnerMatches, time: typeof label === 'string' ? label.slice(11, 16) : '',
       at, odds: text ? Number(text) : null };
   });
 }
@@ -29,6 +32,7 @@ export function historyMetrics(points, currentOdds) {
   for (let index = 0; index < history.length; index += 1) {
     const point = history[index];
     if (!point || !validOdds(point.odds) || !Number.isFinite(point.at)) reasons.add('QUOTE_HISTORY_INVALID');
+    if (point?.runnerMatches === false) reasons.add('QUOTE_RUNNER_MISMATCH');
     if (point?.dateMatches === false) reasons.add('QUOTE_HISTORY_DATE_MISMATCH');
     const previous = history[index - 1];
     if (previous && point) {

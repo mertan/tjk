@@ -72,10 +72,10 @@ test('invalid, duplicated, unordered, unbound and incomplete histories fail clos
 
 let sequence = 0;
 async function source(t, { conflict = false, anomaly = false, mismatch = false, missing = false,
-  stale = false, v3 = false, snapshotStore = createV3SnapshotStore(), keyOverride,
-  now = Date.parse('2026-10-10T13:55:01+03:00') } = {}) {
+  stale = false, v3 = false, wrongRunner = false, snapshotStore = createV3SnapshotStore(), keyOverride,
+  date = '2026-10-' + String(10 + sequence).padStart(2, '0'),
+  now = Date.parse(date + 'T13:55:01+03:00') } = {}) {
   const key = keyOverride || 'SAFETY' + (++sequence);
-  const date = '2026-10-10';
   const clockStarted = performance.now();
   t.mock.method(Date, 'now', () => now + Math.floor(performance.now() - clockStarted));
   t.mock.method(globalThis, 'fetch', async (input) => {
@@ -88,13 +88,13 @@ async function source(t, { conflict = false, anomaly = false, mismatch = false, 
       kosular: [{ NO: 1, SAAT: '14:00', PIST: 'Çim', DURUM: 'AÇIK' }],
       atlar: { 1: { 1: 'TEST 1', 2: 'TEST 2', 3: 'TEST 3', 4: 'TEST 4', 7: 'ATLI FIRTINA' } }
     }] } });
-    if (url.endsWith('.csv')) return new Response(program());
+    if (url.endsWith('.csv')) return new Response(program(date.slice(8, 10) + '/10/2026'));
     if (url.includes('/history?')) {
       assert.notEqual(new URL(url).searchParams.get('horse'), '7', 'withdrawn runner must not request history');
       const age = stale ? 3600000 : 0;
       return json({ success: true, data: {
         labels: [120000, 60000, 1000].map((ago) => new Date(now - ago - age).toISOString()),
-        datasets: [{ data: [anomaly ? '241,7' : '4', '3,2', '3,2'] }]
+        datasets: [{ label: wrongRunner ? '30' : new URL(url).searchParams.get('horse'), data: [anomaly ? '241,7' : '4', '3,2', '3,2'] }]
       } });
     }
     return json({ success: true, data: { muhtemeller: { SAAT: '14:00', PIST: 'Çim', DURUM: 'AÇIK',
@@ -127,7 +127,8 @@ test('API preserves PAS for discontinuity, source mismatch, missing odds and sta
     [{ anomaly: true }, 'ODDS_DISCONTINUITY'],
     [{ mismatch: true }, 'QUOTE_VALUE_MISMATCH'],
     [{ missing: true }, 'INVALID_CURRENT_ODDS'],
-    [{ stale: true }, 'QUOTE_STALE']
+    [{ stale: true }, 'QUOTE_STALE'],
+    [{ wrongRunner: true }, 'QUOTE_RUNNER_MISMATCH']
   ]) {
     const result = await source(t, options);
     noPicks(result);
@@ -228,7 +229,7 @@ test('V3 source-to-API path uses the audited synthetic model after a real pre-cu
     await rm(dir, { recursive: true, force: true });
   });
   const parsed = parseProgramCsv(program())[0];
-  const target = liveRaceFromProgram({ programRace: parsed, date: '2026-10-10', venueKey: 'SAFETYPIPE' });
+  const target = liveRaceFromProgram({ programRace: parsed, date: '2026-10-30', venueKey: 'SAFETYPIPE' });
   const history = ['2026-09-01', '2026-09-02'].map((date) => ({
     ...target, date, runners: target.runners.map((r) => ({
       ...r, position: r.scratched ? null : r.number, finishTime: r.scratched ? null : 80 + r.number
@@ -249,12 +250,12 @@ test('V3 source-to-API path uses the audited synthetic model after a real pre-cu
   process.env.V3_MODEL_PATH = modelFile;
   process.env.V3_HISTORY_PATH = historyFile;
   const snapshotStore = createV3SnapshotStore();
-  const cutoff = Date.parse('2026-10-10T13:55:00+03:00');
-  const before = await source(t, { v3: true, snapshotStore, keyOverride: 'SAFETYPIPE', now: cutoff - 1000 });
+  const cutoff = Date.parse('2026-10-30T13:55:00+03:00');
+  const before = await source(t, { v3: true, date: '2026-10-30', snapshotStore, keyOverride: 'SAFETYPIPE', now: cutoff - 1000 });
   noPicks(before);
   assert.ok(before.analysis.reasonCodes.includes('V3_CUTOFF_NOT_REACHED'));
   t.mock.restoreAll();
-  const after = await source(t, { v3: true, snapshotStore, keyOverride: 'SAFETYPIPE', now: cutoff + 1000 });
+  const after = await source(t, { v3: true, date: '2026-10-30', snapshotStore, keyOverride: 'SAFETYPIPE', now: cutoff + 1000 });
   assert.equal(after.analysis.status, 'OK', after.analysis.reasonCodes.join(','));
   assert.equal(after.analysis.modelVersion, 'tjk-v3');
   assert.equal(after.analysis.confidence, null);

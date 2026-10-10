@@ -60,7 +60,7 @@ export async function analyzeLiveV3({
   programRace, date, venueKey, quote, reasonCodes = [],
   modelPath = process.env.V3_MODEL_PATH || '.v2-data/v3-model.json',
   historyPath = process.env.V3_HISTORY_PATH || '.v2-data/races-yer.json',
-  now = Date.now()
+  now
 } = {}) {
   if (reasonCodes.length) return pass(reasonCodes);
   let race;
@@ -84,7 +84,13 @@ export async function analyzeLiveV3({
     return pass(['V3_HISTORY_UNAVAILABLE']);
   }
   try {
-    return predictLiveV3({ artifact, history, race, quote, reasonCodes, now });
+    const clock = () => now === undefined ? Date.now() : now;
+    const result = predictLiveV3({ artifact, history, race, quote, reasonCodes, now: clock() });
+    // File IO and history feature generation may cross the off-time on Termux.
+    if (result.status === 'OK' && clock() >= Date.parse(race.date + 'T' + race.time + ':00+03:00')) {
+      return pass(['V3_RACE_STARTED']);
+    }
+    return result;
   } catch {
     // A corrupt history row or incompatible private artifact cannot escape
     // into a stale prediction or an automatic V2 fallback.
