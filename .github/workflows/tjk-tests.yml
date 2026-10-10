@@ -1,9 +1,9 @@
 name: TJK regression tests
 on:
   pull_request:
-    branches: [main]
+    # Include stacked PR targets.
   push:
-    branches: [codex/tjk-parser-regression-20261009]
+    branches: [main, "codex/**", "devin/**"]
 permissions:
   contents: read
 jobs:

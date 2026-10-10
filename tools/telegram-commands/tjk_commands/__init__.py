@@ -7,3 +7,6 @@ from .store import PredictionStore, SafeStoreError, VerifiedResult
 __all__ = ["CommandDispatcher", "PredictionStore", "SafeStoreError", "VerifiedResult",
            "Candidate", "CommandRequest", "ProviderRegistration", "Reply", "SourceEvidence",
            "StockRiskInputs", "PR6RaceProvider"]
+
+from .engine_bridge import RaceEngineProvider, RaceSnapshot, EquityEngineProvider, EquitySnapshot, LocalRaceAnalysisReader
+__all__ += ["RaceEngineProvider", "RaceSnapshot", "EquityEngineProvider", "EquitySnapshot", "LocalRaceAnalysisReader"]

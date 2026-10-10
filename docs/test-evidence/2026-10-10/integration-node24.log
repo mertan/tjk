@@ -1,0 +1,68 @@
+
+> tjk-canli-radar@1.0.0 test
+> node --test
+
+✔ complete field produces compatible scores and actual-history support (3.010182ms)
+✔ AGF values, ranks, availability and malformed numbers cannot change any decision (1.279384ms)
+✔ invalid fields fail closed for all runners instead of dropping the incomplete runner (0.763408ms)
+✔ empty, one-runner, duplicate-number and malformed fields cannot be predicted (0.341864ms)
+✔ all-zero ratings fail instead of receiving a uniform fallback (0.389116ms)
+✔ opening/current fallback and caller-supplied movement cannot manufacture history (0.599803ms)
+✔ external race gates force PAS and strip previously attached prediction fields (0.196365ms)
+✔ only explicitly withdrawn runners are excluded; at least two active runners are needed (0.281203ms)
+✔ finite large ratings normalize without overflow (0.429756ms)
+✔ invalid cache and limiter settings fail instead of hanging or removing limits (1.140034ms)
+✔ TJK Istanbul wall-clock labels parse to UTC; malformed times are rejected (1.813057ms)
+✔ freshness is verified only by recent real timestamps (2.056222ms)
+✔ rating 0 is unrated abroad, a real zero at home; empty is missing and never imputed (0.875677ms)
+✔ Belmont 5 and 6 produce predictions with fresh timestamps and keep their own runner sets (583.391015ms)
+✔ stale history or stale heartbeat on the same race is PAS with explicit reasons (607.316768ms)
+✔ cache coalesces concurrent producers, never caches failures and stays bounded (20.923973ms)
+✔ rate limiter blocks after the per-window budget (0.400733ms)
+✔ /healthz never calls TJK; /api is rate limited per client (19.816007ms)
+✔ backtest uses only points at or before the cutoff and wraps midnight post times (3.236138ms)
+✔ results CSV winners parse and rates are withheld below the minimum sample (1.179164ms)
+✔ fresh history cannot verify a mismatching current price (289.28935ms)
+✔ official Belmont Park fixture preserves all nine separate races (6.175418ms)
+✔ Belmont 5: named colon header, nine runners, no race 6 contamination (1.439936ms)
+✔ Belmont 6: unnamed colon-free header starts its own eight-runner race (1.892106ms)
+✔ program filename joins venue words and stays on the official report host (1.899407ms)
+✔ unsafe or missing filename input cannot create a report URL (0.620623ms)
+✔ Turkish/ASCII race titles accept optional names, colons and either clock delimiter (0.269745ms)
+✔ malformed race boundaries cannot append runners to a previous race (0.33276ms)
+✔ every copy of a duplicated race number is omitted, even if one header is malformed (0.348444ms)
+✔ duplicate nonempty column labels omit the affected race instead of overwriting fields (0.276837ms)
+✔ repeated or redefined runner headers invalidate the affected race (0.245579ms)
+✔ short rows missing labelled cells omit a race; explicit empty cells and unlabelled extras stay missing (0.21246ms)
+✔ invalid or duplicate runner IDs omit the affected race without damaging the next race (0.33889ms)
+✔ a runner table cannot reopen after its official betting footer (0.154212ms)
+✔ semicolon CSV quotes preserve cell boundaries and escaped quotes (0.143566ms)
+✔ empty or incomplete quoted source returns no fabricated program (0.084037ms)
+✔ Belmont API uses the official filename and keeps races 5 and 6 separate (586.740107ms)
+✔ missing program and invalid active odds produce PAS without silently dropping a horse (578.37854ms)
+✔ official results and incomplete participant fields cannot become predictions (586.2399ms)
+✔ upstream network failures are explicit PAS while invalid user arguments stay errors (25.140696ms)
+✔ response-body failures stay PAS for mandatory and optional sources (632.069492ms)
+✔ malformed race clocks fail closed without throwing a source TypeError (903.403916ms)
+✔ malformed source payloads are source failures, not user errors or server crashes (505.338392ms)
+✔ wrong program date/place is unavailable rather than lending another race its ratings (608.056317ms)
+✔ schedule timestamps and fresh day heartbeats never certify race quote freshness (0.773493ms)
+✔ archive inputs cannot create predictions without pre-cutoff snapshot provenance (1.762882ms)
+✔ payload-only and conflicting results never enter the success denominator (0.734685ms)
+✔ invalid backtest options fail before any fetch or cache creation (460.417187ms)
+✔ spoofed X-Forwarded-For cannot reset the peer request budget (18.893976ms)
+✔ TJK CSV programını koşu ve atlara ayırır (2.587201ms)
+✔ analiz motoru favori, değer ve hareket sinyali üretir (0.695697ms)
+ℹ tests 51
+ℹ suites 0
+ℹ pass 51
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4624.552232
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

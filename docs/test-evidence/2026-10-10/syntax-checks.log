@@ -1,0 +1,2 @@
+PASS: node --check 16 JavaScript files; ast.parse 47 Python files; git diff --check
+Dedicated lint/type checks: NOT CONFIGURED (no linter/typechecker script or configuration).

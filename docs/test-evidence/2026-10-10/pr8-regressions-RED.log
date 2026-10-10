@@ -1,0 +1,124 @@
+✔ TJK Istanbul wall-clock labels parse to UTC; malformed times are rejected (1.346085ms)
+✔ freshness is verified only by recent real timestamps (0.976108ms)
+✔ rating 0 is unrated abroad, a real zero at home; empty is missing and never imputed (0.53804ms)
+✔ Belmont 5 and 6 produce predictions with fresh timestamps and keep their own runner sets (579.276627ms)
+✔ stale history or stale heartbeat on the same race is PAS with explicit reasons (601.166855ms)
+✔ cache coalesces concurrent producers, never caches failures and stays bounded (21.757538ms)
+✔ rate limiter blocks after the per-window budget (0.356256ms)
+✔ /healthz never calls TJK; /api is rate limited per client (16.795064ms)
+✔ backtest uses only points at or before the cutoff and wraps midnight post times (1.383541ms)
+✔ results CSV winners parse and rates are withheld below the minimum sample (0.792943ms)
+✖ fresh history cannot verify a mismatching current price (279.988613ms)
+✖ archive inputs cannot create predictions without pre-cutoff snapshot provenance (4.190483ms)
+✖ payload-only and conflicting results never enter the success denominator (0.644009ms)
+✖ invalid backtest options fail before any fetch or cache creation (63.90674ms)
+✖ spoofed X-Forwarded-For cannot reset the peer request budget (20.393957ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 10
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1604.249206
+
+✖ failing tests:
+
+test at test/review-red-freshness-backtest.test.mjs:211:1
+✖ fresh history cannot verify a mismatching current price (279.988613ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  'OK' !== 'PAS'
+
+      at TestContext.<anonymous> (file:///workspace/tjk-pr8-review/test/review-red-freshness-backtest.test.mjs:213:10)
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at listOnTimeout (node:internal/timers:597:9)
+      at process.processTimers (node:internal/timers:571:7)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'OK',
+    expected: 'PAS',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/review-red-review-regressions.test.mjs:8:1
+✖ archive inputs cannot create predictions without pre-cutoff snapshot provenance (4.190483ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  'OK' !== 'PAS'
+
+      at TestContext.<anonymous> (file:///workspace/tjk-pr8-review/test/review-red-review-regressions.test.mjs:13:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'OK',
+    expected: 'PAS',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/review-red-review-regressions.test.mjs:19:1
+✖ payload-only and conflicting results never enter the success denominator (0.644009ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  4 !== 1
+
+      at TestContext.<anonymous> (file:///workspace/tjk-pr8-review/test/review-red-review-regressions.test.mjs:22:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 4,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/review-red-review-regressions.test.mjs:29:1
+✖ invalid backtest options fail before any fetch or cache creation (63.90674ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  0 !== 2
+
+      at TestContext.<anonymous> (file:///workspace/tjk-pr8-review/test/review-red-review-regressions.test.mjs:32:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/review-red-review-regressions.test.mjs:37:1
+✖ spoofed X-Forwarded-For cannot reset the peer request budget (20.393957ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  404 !== 429
+
+      at TestContext.<anonymous> (file:///workspace/tjk-pr8-review/test/review-red-review-regressions.test.mjs:47:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 404,
+    expected: 429,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

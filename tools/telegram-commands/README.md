@@ -84,3 +84,37 @@ Testler kurmaca girdiler ve geçici SQLite dosyaları kullanır; piyasa taramas�
 Yerel doğrulama: Python 3.12.14 ve 3.13.13 üzerinde **76/76** test başarılı; depodaki **35/35** Node regresyon testi de başarılı. Gerçek Telegram alıcısı, üretim veri/sonuç sağlayıcısı veya telefon bağlantısı test edilmiş sayılmaz.
 
 Bu geliştirme PR #6 dalının üzerine hazırlanır; birleştirme sırası PR #6, ardından ortak komut PR'ıdır. İkisi için de kullanıcı onayı gerekir. Bu belge kurulum veya servis başlatma talimatı değildir; mevcut alıcı ayrıntıları geldikten sonra bağlantı noktası kesinleştirilmelidir.
+
+## Integration review (2026-10-10)
+
+`/start` and `/help` now explain the shared commands. PAS replies retain machine-readable reason codes and add Turkish explanations. The existing `PR6RaceProvider` retains its conservative legacy behavior. New adapters in `tjk_commands.engine_bridge` connect **existing engine readers**; they neither launch a Telegram receiver nor send a message.
+
+```python
+from tjk_commands import LocalRaceAnalysisReader, RaceEngineProvider, ProviderRegistration
+
+# EXISTING_ENGINE_PORT belongs to the already-running local Node service.
+# No service is started here. Keep the existing receiver and its send method.
+race_reader = LocalRaceAnalysisReader(EXISTING_ENGINE_PORT)
+providers = {
+    "at": ProviderRegistration(
+        "market-no-agf-v2", RaceEngineProvider(race_reader),
+        frozenset({"vhs.tjk.org", "vhs-medya.tjk.org", "medya-cdn.tjk.org"}),
+    )
+}
+```
+
+Usage: `/at YYYY-MM-DD HIPODROM KOSU`. Arguments must match the engine's returned date, venue and race number. The bridge uses the engine's selected runner, never recomputes a score or uses AGF. Each active runner's current price must match its latest timestamped history point and be at most **60 seconds** old. Node's 720-second freshness status alone cannot pass this bridge.
+
+**The example intentionally remains PAS with today's incomplete source contract.** `LocalRaceAnalysisReader` provides no fabricated metadata. An optional, separately reviewed `evidence_reader(snapshot, request)` must return real `SourceEvidence` for event, runners, odds, ratings and history with original source timestamps and known delays. Odds evidence must match the oldest bound runner quote; a download time, scheduled start or heartbeat is never substituted. The Node response currently does not establish all of these facts. Do not invent this callback's evidence just to obtain TAHMİN. Event schedule time is only a closing deadline. Ambiguous midnight schedules need a source-confirmed date and must remain PAS.
+
+`EquityEngineProvider(reader)` accepts an `EquitySnapshot` containing an existing `equity_guard` bundle, explicit event/market/horizon and source evidence. It runs the existing risk engine, derives the observational selection/risk fields from that same bundle, matches evidence times to the underlying fields, and then lets the dispatcher enforce all stricter shared gates. Add `tools/termux-manager` alongside `tools/telegram-commands` to PYTHONPATH. Public Fintable research reports are not live bundles; missing bid/ask, volume, news or source timestamps remains PAS. No default equity provider or new network collector is registered. Basketball/football providers remain absent.
+
+Prediction and PAS decisions remain immutable prediction-table records; final results remain in the separate verified_results table. The end-to-end test runs the real Node analysis, records a pending prediction and separate PAS, then uses a clearly synthetic test verifier to settle once. No production official-result verifier exists yet. Never register the test verifier or derive an actual outcome from the forecast.
+
+Integration tests need Node >=20 and Python 3.12/3.13:
+
+```sh
+PYTHONPATH=tools/telegram-commands:tools/termux-manager python -m unittest discover -s tools/telegram-commands/tests -v
+```
+
+[Independent review, exact revisions, RED/GREEN evidence and live blockers](../../docs/pr8-independent-review-20261010.md).

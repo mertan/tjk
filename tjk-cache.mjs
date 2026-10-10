@@ -3,6 +3,7 @@
  * limiter and an inbound fixed-window rate limiter. No external dependencies.
  */
 export function createCache({ maxEntries = 500, now = () => Date.now() } = {}) {
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) throw new RangeError('INVALID_CACHE_LIMIT');
   const entries = new Map();
   const inflight = new Map();
   const stats = { hits: 0, misses: 0, coalesced: 0, evictions: 0 };
@@ -49,6 +50,7 @@ export function createCache({ maxEntries = 500, now = () => Date.now() } = {}) {
 }
 
 export function createLimiter({ concurrency = 4, minIntervalMs = 100, now = () => Date.now() } = {}) {
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || !Number.isFinite(minIntervalMs) || minIntervalMs < 0) throw new RangeError('INVALID_UPSTREAM_LIMIT');
   let active = 0;
   let nextStart = 0;
   const queue = [];
@@ -83,6 +85,7 @@ export function createLimiter({ concurrency = 4, minIntervalMs = 100, now = () =
 }
 
 export function createRateLimiter({ windowMs = 60_000, max = 120, maxKeys = 10_000, now = () => Date.now() } = {}) {
+  if (!Number.isSafeInteger(max) || max < 1 || !Number.isSafeInteger(maxKeys) || maxKeys < 1 || !Number.isFinite(windowMs) || windowMs <= 0) throw new RangeError('INVALID_RATE_LIMIT');
   const windows = new Map();
   return function check(key) {
     const time = now();

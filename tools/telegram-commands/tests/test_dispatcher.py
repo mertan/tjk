@@ -148,7 +148,7 @@ class DispatcherTests(unittest.TestCase):
 
     def test_unknown_other_bot_or_noncommand_falls_through(self):
         dispatcher = self.dispatcher()
-        for text in ("/help", "/at@other_bot", "merhaba /at", "/at\n/durum", "/At", "/atx"):
+        for text in ("/unknown", "/at@other_bot", "merhaba /at", "/at\n/durum", "/At", "/atx"):
             self.assertIsNone(dispatcher.handle_update(update(text)))
         self.assertIn("PAS", dispatcher.handle_update(update("/at@FIXTURE_BOT")).text)
 

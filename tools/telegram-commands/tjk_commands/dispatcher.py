@@ -5,7 +5,7 @@ import re
 from .gates import assess, aware, identifier
 from .models import Candidate, CommandRequest, ProviderRegistration, Reply, SPORTS
 
-_COMMAND = re.compile(r"/(at|basket|futbol|hisse|durum|performans)(?:@([A-Za-z0-9_]{5,32}))?(?:\s+(.+))?\Z")
+_COMMAND = re.compile(r"/(at|basket|futbol|hisse|durum|performans|start|help)(?:@([A-Za-z0-9_]{5,32}))?(?:\s+(.+))?\Z")
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 
 
@@ -68,6 +68,10 @@ class CommandDispatcher:
         args = tuple((raw_args or "").split())
         if len(args) > 8 or any(len(arg) > 64 for arg in args):
             return Reply(chat_id, "PAS | INVALID_COMMAND_ARGUMENTS")
+        if command in ("start", "help"):
+            return Reply(chat_id, "/at YYYY-MM-DD HIPODROM KOSU | /basket | /futbol | /hisse | /durum | /performans\n"
+                         "Veri sağlayıcısı bağlı değilse veya veri eksik/eski/çelişkiliyse PAS. "
+                         "Tahmin ve kesinleşmiş sonuç ayrı kaydedilir. AGF puana katılmaz. Emir gönderilmez.")
         if command in ("durum", "performans"):
             if args:
                 return Reply(chat_id, "PAS | INVALID_COMMAND_ARGUMENTS")
@@ -120,7 +124,19 @@ class CommandDispatcher:
 
     def _prediction_reply(self, chat_id, row):
         if row["decision"] == "PAS":
-            return Reply(chat_id, f"/{row['sport']} | PAS | {', '.join(row['reasons'])}")
+            explanations = {
+                "PROVIDER_UNAVAILABLE": "Veri sağlayıcısı bağlı değil veya okunamadı.",
+                "SOURCE_PROVENANCE_UNAVAILABLE": "Girdinin kaynağı ve kaynak zamanı doğrulanamadı.",
+                "STALE_DATA": "Kaynak verisi izin verilen yaştan eski veya gelecekte.",
+                "UPSTREAM_PAS": "Tahmin motoru eksik veya çelişkili veri nedeniyle PAS verdi.",
+                "SOURCE_FRESHNESS_UNVERIFIED": "Puanlanan oranın güncelliği doğrulanamadı.",
+                "QUOTE_BINDING_UNVERIFIED": "Oran ve kaynak zamanı aynı kayıtla eşleşmiyor.",
+                "EQUITY_ENGINE_PAS": "Microcap veri veya risk kontrolleri geçmedi; gerçek zamanlı fırsat doğrulanmadı.",
+                "INVALID_COMMAND_ARGUMENTS": "Kullanım: /at YYYY-MM-DD HIPODROM KOSU; diğer komutlar için /help.",
+            }
+            detail = " ".join(dict.fromkeys(explanations[r] for r in row['reasons'] if r in explanations))
+            return Reply(chat_id, f"/{row['sport']} | PAS | {', '.join(row['reasons'])}\n"
+                         + (detail or "Zorunlu veri veya doğrulama koşulları sağlanmadı."))
         label = "İZLE (gözlemsel tahmin)" if row["sport"] == "hisse" else "TAHMİN"
         lines = [f"/{row['sport']} | {label} | {row['selection']}",
                  f"Kayıt zamanı (UTC): {row['created_at']}",
