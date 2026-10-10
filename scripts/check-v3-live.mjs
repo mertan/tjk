@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Read-only manifest audit. Does not train, publish, bet or start any service. */
+/** Read-only manifest or training-replay audit. Writes no files and starts no services. */
 import { readFile } from 'node:fs/promises';
 import { auditBundle } from '../model-v3/training-bundle.mjs';
 import { resolve } from 'node:path';
