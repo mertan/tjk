@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "provider": "alpaca",
+  "feed": "sip",
+  "adjustment": "raw",
+  "timeframe": "1Min",
+  "complete": false,
+  "retrieval_complete": false,
+  "training_ready": false,
+  "model_training_ready": false,
+  "execution_enabled": false,
+  "scope": "explicit_symbols_only_max_20",
+  "pit_universe_verified": false,
+  "delisted_coverage_verified": false,
+  "splits_verified": false,
+  "expected_bar_coverage_verified": false,
+  "chunks": [],
+  "errors": [
+    "credentials_missing"
+  ],
+  "requests": 0,
+  "rows": 0,
+  "symbols": [
+    "JFIN"
+  ],
+  "start": "2025-10-29T04:00:00Z",
+  "end_exclusive": "2026-10-29T04:00:00Z",
+  "created_at": "2026-10-29T17:14:41.305734Z",
+  "probe_scope": "single_symbol_access_check_not_market_universe_or_recommendation",
+  "connected_data_tool_probe": {
+    "provider": "Alpaca MCP",
+    "timeframe": "1Min",
+    "feed": "sip",
+    "symbol": "JFIN",
+    "start": "2025-10-29T13:30:00Z",
+    "end": "2025-10-29T13:40:00Z",
+    "result": "connection_timed_out",
+    "observed_bars": 0,
+    "note": "Network failure does not establish subscription or entitlement requirements."
+  }
+}
