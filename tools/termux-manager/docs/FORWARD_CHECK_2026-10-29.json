@@ -1,0 +1,48 @@
+{
+  "sequence": 1,
+  "recorded_at": "2026-10-29T17:14:42.104134Z",
+  "event_sha256": "90aa0460cf13665329bbe6abcb5fb30e7fd81ae6f02a98d2ab6a1516a751591a",
+  "event": {
+    "event_type": "readiness_check",
+    "execution_enabled": false,
+    "generated_at": "2026-10-29T17:14:42.087113Z",
+    "history_retrieval_complete": false,
+    "history_training_ready_claim": false,
+    "live_forecasting_started": false,
+    "model_trained": false,
+    "one_year_backtest_executed": false,
+    "predictions": [],
+    "probability": null,
+    "protocol": {
+      "first_signal_close_et": "09:50",
+      "id": "us_1_5_orb_research_20261029_v2",
+      "last_signal_close_et": "10:30",
+      "live_entry": "first_eligible_observed_quote_after_forecast_is_persisted",
+      "max_holding_minutes": 20,
+      "max_risk_fraction": 0.03,
+      "max_risk_usd": 0.08,
+      "min_risk_usd": 0.02,
+      "opening_range_minutes": 15,
+      "prediction_target": "target_before_stop_within_20_minutes_after_entry",
+      "price_max_usd": 5,
+      "price_min_usd": 1,
+      "signal_timeframe_minutes": 5,
+      "stop_below_signal_low_usd": 0.01,
+      "target_r": 2,
+      "validation": "not_trained_not_validated",
+      "volume_multiple_previous_3_completed_bars": 1.5
+    },
+    "protocol_sha256": "6b73faac5ef9b150bfcb1bb0d2c51a7147fc926483c07f616c10d2d38be01940",
+    "reasons": [
+      "TRAINED_FORECAST_MODEL_NOT_IMPLEMENTED",
+      "ONE_YEAR_HISTORY_NOT_DOWNLOADED",
+      "HISTORICAL_COVERAGE_NOT_VALIDATED",
+      "LIVE_DATA_CONNECTION_UNAVAILABLE",
+      "OPENING_STRATEGY_WINDOW_CLOSED"
+    ],
+    "schema_version": 1,
+    "session_date_et": "2026-10-29",
+    "status": "BLOCKED",
+    "whole_market_coverage_verified": false
+  }
+}
